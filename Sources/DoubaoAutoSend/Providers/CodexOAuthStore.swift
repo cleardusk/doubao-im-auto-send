@@ -7,11 +7,19 @@ enum CodexAuthSource: String {
     case codexAuthFile = "codex auth.json"
 }
 
+enum CodexCredentialExpiryStatus {
+    case valid
+    case expired
+    case unknown
+}
+
 struct CodexEnvironmentStatus {
     let authConfigured: Bool
+    let authUsable: Bool
     let authSource: CodexAuthSource?
     let expiresAt: Date?
     let authMode: String?
+    let expiryStatus: CodexCredentialExpiryStatus
 }
 
 struct CodexCredential {
@@ -25,6 +33,7 @@ struct CodexCredential {
 
 enum CodexOAuthError: LocalizedError {
     case missingAuth
+    case expiredAuth(Date?)
     case invalidAuthStore(String)
     case missingAccountID
 
@@ -32,6 +41,11 @@ enum CodexOAuthError: LocalizedError {
         switch self {
         case .missingAuth:
             return "未检测到可用的 Codex OAuth 登录态。请先执行 `openclaw models auth login --provider openai-codex` 或 `codex login`。"
+        case .expiredAuth(let expiresAt):
+            if let expiresAt {
+                return "Codex 本地登录态已过期：\(ISO8601DateFormatter().string(from: expiresAt))。请重新执行 `openclaw models auth login --provider openai-codex` 或 `codex login`。"
+            }
+            return "Codex 本地登录态已过期。请重新执行 `openclaw models auth login --provider openai-codex` 或 `codex login`。"
         case .invalidAuthStore(let message):
             return "Codex 本地认证配置无效：\(message)"
         case .missingAccountID:
@@ -54,11 +68,14 @@ actor CodexOAuthStore {
     static func environmentStatus(from environment: [String: String] = ProcessInfo.processInfo.environment) -> CodexEnvironmentStatus {
         let candidates = loadCandidates(from: environment)
         let chosen = chooseBestCandidate(from: candidates)
+        let expiryStatus = chosen.map(expiryStatus(for:)) ?? .unknown
         return CodexEnvironmentStatus(
-            authConfigured: chosen != nil,
+            authConfigured: !candidates.isEmpty,
+            authUsable: chosen.map(isUsable(_:)) ?? false,
             authSource: chosen?.source,
             expiresAt: chosen?.expiresAt,
-            authMode: chosen?.authMode
+            authMode: chosen?.authMode,
+            expiryStatus: expiryStatus
         )
     }
 
@@ -67,8 +84,9 @@ actor CodexOAuthStore {
         guard let chosen = Self.chooseBestCandidate(from: candidates) else {
             throw CodexOAuthError.missingAuth
         }
-        if let expiresAt = chosen.expiresAt, expiresAt <= Date() {
-            logger.log("Codex access token 已过期，仍尝试直接使用本地登录态：source=\(chosen.source.rawValue)")
+        guard Self.isUsable(chosen) else {
+            logger.log("Codex access token 已过期，拒绝继续使用本地登录态：source=\(chosen.source.rawValue)")
+            throw CodexOAuthError.expiredAuth(chosen.expiresAt)
         }
         return chosen
     }
@@ -95,13 +113,13 @@ private extension CodexOAuthStore {
     }
 
     static func chooseBestCandidate(from candidates: [CodexCredential]) -> CodexCredential? {
-        let now = Date()
         let ranked = candidates.map { credential in
             let freshnessRank: Int
-            if let expiresAt = credential.expiresAt {
-                freshnessRank = expiresAt > now ? 2 : 1
-            } else {
+            switch expiryStatus(for: credential) {
+            case .valid, .unknown:
                 freshnessRank = 2
+            case .expired:
+                freshnessRank = 1
             }
             return CandidateRecord(credential: credential, freshnessRank: freshnessRank)
         }
@@ -114,6 +132,17 @@ private extension CodexOAuthStore {
             }
             return (lhs.credential.expiresAt ?? .distantPast) > (rhs.credential.expiresAt ?? .distantPast)
         }.first?.credential
+    }
+
+    static func expiryStatus(for credential: CodexCredential) -> CodexCredentialExpiryStatus {
+        guard let expiresAt = credential.expiresAt else {
+            return .unknown
+        }
+        return expiresAt > Date() ? .valid : .expired
+    }
+
+    static func isUsable(_ credential: CodexCredential) -> Bool {
+        expiryStatus(for: credential) != .expired
     }
 
     static func precedence(of source: CodexAuthSource) -> Int {

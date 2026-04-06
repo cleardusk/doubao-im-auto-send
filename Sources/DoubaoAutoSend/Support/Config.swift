@@ -1,6 +1,23 @@
 import CoreGraphics
 import Foundation
 
+enum ConfigError: LocalizedError {
+    case missingValue(flag: String)
+    case invalidValue(flag: String, value: String, expected: String)
+    case unknownFlag(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .missingValue(let flag):
+            return "参数 \(flag) 缺少值。"
+        case .invalidValue(let flag, let value, let expected):
+            return "参数 \(flag) 的值无效：\(value)。期望：\(expected)。"
+        case .unknownFlag(let flag):
+            return "未知参数：\(flag)。"
+        }
+    }
+}
+
 enum RefineMode: String {
     case trim
     case correct
@@ -149,7 +166,7 @@ struct Config {
     let refineMiniMaxTransport: MiniMaxTransportMode
     let refineText: String?
 
-    static func fromArguments() -> Config {
+    static func fromArguments() throws -> Config {
         var watchedModifier: WatchedModifier = .leftOption
         var minReleaseDelay = 0.6
         var optimizationDelayPerHeldSecond = 0.13
@@ -172,6 +189,27 @@ struct Config {
         var refineText: String?
 
         var iterator = CommandLine.arguments.dropFirst().makeIterator()
+        func requireValue(for flag: String) throws -> String {
+            guard let value = iterator.next() else {
+                throw ConfigError.missingValue(flag: flag)
+            }
+            return value
+        }
+
+        func parseNonNegativeMilliseconds(_ value: String, for flag: String) throws -> TimeInterval {
+            guard let milliseconds = Double(value), milliseconds >= 0 else {
+                throw ConfigError.invalidValue(flag: flag, value: value, expected: "大于等于 0 的毫秒数")
+            }
+            return milliseconds / 1000
+        }
+
+        func parsePositiveMilliseconds(_ value: String, for flag: String) throws -> TimeInterval {
+            guard let milliseconds = Double(value), milliseconds > 0 else {
+                throw ConfigError.invalidValue(flag: flag, value: value, expected: "大于 0 的毫秒数")
+            }
+            return milliseconds / 1000
+        }
+
         while let argument = iterator.next() {
             switch argument {
             case "--left-ctrl":
@@ -183,34 +221,24 @@ struct Config {
             case "--right-option":
                 watchedModifier = .rightOption
             case "--delay-ms":
-                if let value = iterator.next(), let milliseconds = Double(value) {
-                    minReleaseDelay = milliseconds / 1000
-                }
+                minReleaseDelay = try parseNonNegativeMilliseconds(requireValue(for: argument), for: argument)
             case "--per-second-postdelay-ms":
-                if let value = iterator.next(), let milliseconds = Double(value) {
-                    optimizationDelayPerHeldSecond = milliseconds / 1000
-                }
+                optimizationDelayPerHeldSecond = try parseNonNegativeMilliseconds(requireValue(for: argument), for: argument)
             case "--stable-ms":
-                if let value = iterator.next(), let milliseconds = Double(value) {
-                    stableDuration = milliseconds / 1000
-                }
+                stableDuration = try parseNonNegativeMilliseconds(requireValue(for: argument), for: argument)
             case "--poll-ms":
-                if let value = iterator.next(), let milliseconds = Double(value) {
-                    pollInterval = milliseconds / 1000
-                }
+                pollInterval = try parsePositiveMilliseconds(requireValue(for: argument), for: argument)
             case "--max-wait-ms":
-                if let value = iterator.next(), let milliseconds = Double(value) {
-                    maxWaitAfterRelease = milliseconds / 1000
-                }
+                maxWaitAfterRelease = try parseNonNegativeMilliseconds(requireValue(for: argument), for: argument)
             case "--min-hold-ms":
-                if let value = iterator.next(), let milliseconds = Double(value) {
-                    minHoldDuration = milliseconds / 1000
-                }
+                minHoldDuration = try parseNonNegativeMilliseconds(requireValue(for: argument), for: argument)
             case "--log-file":
-                if let value = iterator.next() {
-                    fileLogPath = value
-                    fileLogEnabled = true
+                let value = try requireValue(for: argument)
+                guard !value.isEmpty else {
+                    throw ConfigError.invalidValue(flag: argument, value: value, expected: "非空路径")
                 }
+                fileLogPath = value
+                fileLogEnabled = true
             case "--no-file-log":
                 fileLogEnabled = false
             case "--quiet":
@@ -218,35 +246,45 @@ struct Config {
             case "--refine":
                 refineEnabled = true
             case "--refine-provider":
-                if let value = iterator.next(), let provider = RefineProviderKind(rawValue: value) {
-                    refineProvider = provider
+                let value = try requireValue(for: argument)
+                guard let provider = RefineProviderKind(rawValue: value) else {
+                    throw ConfigError.invalidValue(flag: argument, value: value, expected: "minimax | codex")
                 }
+                refineProvider = provider
             case "--refine-mode":
-                if let value = iterator.next(), let mode = RefineMode(rawValue: value) {
-                    refineMode = mode
+                let value = try requireValue(for: argument)
+                guard let mode = RefineMode(rawValue: value) else {
+                    throw ConfigError.invalidValue(flag: argument, value: value, expected: "trim | correct")
                 }
+                refineMode = mode
             case "--refine-model":
-                if let value = iterator.next(), !value.isEmpty {
-                    refineModel = value
-                    refineModelExplicitlySet = true
+                let value = try requireValue(for: argument)
+                guard !value.isEmpty else {
+                    throw ConfigError.invalidValue(flag: argument, value: value, expected: "非空模型名")
                 }
+                refineModel = value
+                refineModelExplicitlySet = true
             case "--refine-codex-transport":
-                if let value = iterator.next(), let transport = CodexTransportMode(rawValue: value) {
-                    refineCodexTransport = transport
+                let value = try requireValue(for: argument)
+                guard let transport = CodexTransportMode(rawValue: value) else {
+                    throw ConfigError.invalidValue(flag: argument, value: value, expected: "sse | ws")
                 }
+                refineCodexTransport = transport
             case "--refine-minimax-transport":
-                if let value = iterator.next(), let transport = MiniMaxTransportMode(rawValue: value) {
-                    refineMiniMaxTransport = transport
+                let value = try requireValue(for: argument)
+                guard let transport = MiniMaxTransportMode(rawValue: value) else {
+                    throw ConfigError.invalidValue(flag: argument, value: value, expected: "sync | sse | ws")
                 }
+                refineMiniMaxTransport = transport
             case "--refine-timeout-ms":
-                if let value = iterator.next(), let milliseconds = Double(value), milliseconds > 0 {
-                    refineTimeout = milliseconds / 1000
-                    refineTimeoutExplicitlySet = true
-                }
+                refineTimeout = try parsePositiveMilliseconds(requireValue(for: argument), for: argument)
+                refineTimeoutExplicitlySet = true
             case "--refine-text":
-                refineText = iterator.next()
-            default:
+                refineText = try requireValue(for: argument)
+            case "--help", "--check":
                 break
+            default:
+                throw ConfigError.unknownFlag(argument)
             }
         }
 

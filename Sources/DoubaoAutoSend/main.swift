@@ -40,7 +40,14 @@ func printCheck(config: Config, accessibility: AccessibilityService) {
     let hostStatus = miniMaxStatus.hostValidationError == nil ? miniMaxStatus.apiHost : "\(miniMaxStatus.apiHost)（无效）"
     let effectiveMiniMaxEndpoint = miniMaxStatus.effectiveBaseURL ?? "未知"
     let keyStatus = miniMaxStatus.apiKeyPresent ? "已设置" : "未设置"
-    let codexAuthStatus = codexStatus.authConfigured ? (codexStatus.authMode ?? "oauth") : "未检测到"
+    let codexAuthStatus: String
+    if !codexStatus.authConfigured {
+        codexAuthStatus = "未检测到"
+    } else if !codexStatus.authUsable {
+        codexAuthStatus = "已配置但已过期"
+    } else {
+        codexAuthStatus = codexStatus.authMode ?? "oauth"
+    }
     let codexAuthSource = codexStatus.authSource?.rawValue ?? "未检测到"
     let codexExpiry = codexStatus.expiresAt.map { ISO8601DateFormatter().string(from: $0) } ?? "未知"
 
@@ -99,7 +106,14 @@ if CommandLine.arguments.contains("--help") {
     exit(0)
 }
 
-let config = Config.fromArguments()
+let config: Config
+do {
+    config = try Config.fromArguments()
+} catch {
+    fputs("参数错误：\(error.localizedDescription)\n", stderr)
+    fputs("使用 `doubao-im-auto-send --help` 查看用法。\n", stderr)
+    exit(1)
+}
 let logger = Logger(terminalVerbose: config.terminalVerbose, fileLogURL: config.fileLogURL)
 let accessibility = AccessibilityService()
 

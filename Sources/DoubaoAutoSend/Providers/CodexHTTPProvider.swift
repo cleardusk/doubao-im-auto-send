@@ -97,6 +97,9 @@ final class CodexHTTPProvider: RefineProvider {
         guard status.authConfigured else {
             throw CodexHTTPProviderError.missingAuth
         }
+        guard status.authUsable else {
+            throw CodexOAuthError.expiredAuth(status.expiresAt)
+        }
         self.authStore = CodexOAuthStore(logger: logger, environment: environment)
         self.httpSession = HTTPTransportSupport.makeEphemeralSession(environment: environment)
         self.websocketTransport = CodexWebSocketTransport(logger: logger, environment: environment)

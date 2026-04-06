@@ -38,6 +38,7 @@ doubao-im-auto-send --help
 - `poll-ms=50`
 - `min-hold-ms=250`
 - `max-wait` 默认关闭
+- 默认跳过常见编辑器类应用，如 VS Code、Cursor、Windsurf、JetBrains、Xcode、Sublime
 - 默认文件日志：`~/Library/Logs/doubao-im-auto-send/runtime.log`
 - 等待发送阶段按 `Esc` 可取消自动发送
 

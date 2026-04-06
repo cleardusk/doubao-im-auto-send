@@ -1,6 +1,6 @@
 # doubao-im-auto-send
 
-**A macOS Swift script that listens for Doubao IME voice input completion and automatically sends `Enter` after text becomes stable.**
+**A macOS Swift CLI that listens for Doubao IME voice input completion and automatically sends `Enter` after text becomes stable, with an optional MiniMax CN refine step before sending.**
 
 > Requirements: macOS, Doubao IME, and your terminal app must have both “Input Monitoring” and “Accessibility” permissions enabled.
 
@@ -33,6 +33,12 @@ doubao-im-auto-send
 # Check current environment
 doubao-im-auto-send --check
 doubao-im-auto-send --help
+
+# Enable MiniMax refine
+doubao-im-auto-send --refine
+
+# Test refine only, without event monitoring
+doubao-im-auto-send --refine-text "This is basically basically what I mean"
 ```
 
 ## Runtime Example
@@ -53,16 +59,32 @@ Terminal log example (colors are enabled only in a TTY terminal):
 - Common editor apps are skipped by default, including VS Code, Cursor, Windsurf, JetBrains IDEs, Xcode, and Sublime
 - Default file log: `~/Library/Logs/doubao-im-auto-send/runtime.log`
 - Press `Esc` during the waiting-to-send phase to cancel auto-send
+- `--refine` is disabled by default; when enabled, MiniMax CN runs before auto-send
+- Default refine mode: `trim`
+- Default refine model: `MiniMax-M2.5-highspeed`
+- Default refine timeout: `6000ms`
+
+## MiniMax Configuration
+
+- `MINIMAX_API_KEY`: required when using `--refine` or `--refine-text`
+- `MINIMAX_API_HOST`: optional, defaults to `https://api.minimaxi.com`
+- The current implementation uses the OpenAI-compatible endpoint: `/v1/chat/completions`
 
 ## FAQ
 
 - No response: check permissions, confirm Doubao IME is active, and make sure hold duration is not below `250ms`
-- No auto-send: may be interrupted by `Esc`, mouse input, input method switch, or frontmost app switch
+- No auto-send: may be interrupted by `Esc`, new keyboard/mouse input, input method switch, or frontmost app switch
+- Refine not working: run `doubao-im-auto-send --check` and confirm `MINIMAX_API_KEY` / `MINIMAX_API_HOST`
 - Unstable behavior in some input fields: the script relies on Accessibility APIs to read text, and some fields may not be consistently readable
 - Terminal-only logs: use `--no-file-log`; silent terminal output: use `--quiet`
 
 ## Related Files
 
 - [doubao-im-auto-send.swift](./doubao-im-auto-send.swift): primary script
+- [Config.swift](./Config.swift): config and CLI argument parsing
+- [AutoSendEngine.swift](./AutoSendEngine.swift): main state machine and send pipeline
+- [Accessibility.swift](./Accessibility.swift): focused element read/write helpers
+- [MiniMaxClient.swift](./MiniMaxClient.swift): MiniMax CN API client
+- [Logging.swift](./Logging.swift): terminal and file logging
 - [install.sh](./install.sh): one-command installer
 - [doubao-im-auto-send-model.md](./doubao-im-auto-send-model.md): detailed model and parameter explanation

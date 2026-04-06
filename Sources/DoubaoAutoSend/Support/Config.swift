@@ -165,6 +165,7 @@ struct Config {
     let refineCodexTransport: CodexTransportMode
     let refineMiniMaxTransport: MiniMaxTransportMode
     let refineText: String?
+    let rewriteText: String?
 
     static func fromArguments() throws -> Config {
         var watchedModifier: WatchedModifier = .leftOption
@@ -187,6 +188,7 @@ struct Config {
         var refineCodexTransport = CodexTransportMode.sse
         var refineMiniMaxTransport = MiniMaxTransportMode.sync
         var refineText: String?
+        var rewriteText: String?
 
         var iterator = CommandLine.arguments.dropFirst().makeIterator()
         func requireValue(for flag: String) throws -> String {
@@ -281,6 +283,8 @@ struct Config {
                 refineTimeoutExplicitlySet = true
             case "--refine-text":
                 refineText = try requireValue(for: argument)
+            case "--rewrite-text":
+                rewriteText = try requireValue(for: argument)
             case "--help", "--check":
                 break
             default:
@@ -321,7 +325,8 @@ struct Config {
             refineTimeout: refineTimeout,
             refineCodexTransport: refineCodexTransport,
             refineMiniMaxTransport: refineMiniMaxTransport,
-            refineText: refineText
+            refineText: refineText,
+            rewriteText: rewriteText
         )
     }
 }

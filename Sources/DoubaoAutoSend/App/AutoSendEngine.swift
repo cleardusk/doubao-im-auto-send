@@ -23,9 +23,14 @@ private final class SessionState {
     var pendingRefineTask: RefineTask?
     var activeRequestID: UUID?
     var focusSnapshotAtRelease: FocusedElementSnapshot?
+    var loggedPendingTerminalInput = false
+    var consoleLoggingSuppressed = false
 }
 
 final class AutoSendEngine {
+    private static let terminalInputGraceAfterRelease: TimeInterval = 2.0
+    private static let refineInputPreviewLimit = 120
+
     private let config: Config
     private let logger: Logger
     private let accessibility: AccessibilityService
@@ -167,6 +172,10 @@ final class AutoSendEngine {
         }
 
         state.focusSnapshotAtRelease = accessibility.captureFocusedElementSnapshot()
+        if let snapshot = state.focusSnapshotAtRelease,
+           accessibility.usesTerminalRewrite(for: snapshot.element) {
+            suppressConsoleLoggingForTerminal()
+        }
         state.frontmostBundleAtRelease = state.focusSnapshotAtRelease?.bundleID ?? accessibility.frontmostBundleID()
         state.releaseStartedAt = CFAbsoluteTimeGetCurrent()
         state.focusedValueAtRelease = state.focusSnapshotAtRelease?.text
@@ -229,6 +238,7 @@ final class AutoSendEngine {
         let now = CFAbsoluteTimeGetCurrent()
         let elapsed = now - state.releaseStartedAt
         let currentValue = currentSnapshot?.text
+        let isTerminalShell = currentSnapshot.map { accessibility.usesTerminalRewrite(for: $0.element) } ?? false
 
         if currentValue != state.lastObservedValue {
             state.lastObservedValue = currentValue
@@ -250,15 +260,33 @@ final class AutoSendEngine {
 
         let stableFor = now - state.lastValueChangedAt
         if stableFor >= config.stableDuration {
+            let trimmedCurrentValue = currentValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if isTerminalShell,
+               trimmedCurrentValue.isEmpty,
+               elapsed < state.requiredReleaseDelay + Self.terminalInputGraceAfterRelease {
+                if !state.loggedPendingTerminalInput {
+                    logger.log("等待：terminal 当前输入尚未可读，继续观察")
+                    state.loggedPendingTerminalInput = true
+                }
+                scheduleNextPoll(after: config.pollInterval)
+                return
+            }
+
             logSendBasis()
-            maybeStartRefineOrSend(stableText: currentValue)
+            maybeStartRefineOrSend(
+                stableText: currentValue,
+                stableSnapshot: currentSnapshot
+            )
             return
         }
 
         scheduleNextPoll(after: config.pollInterval)
     }
 
-    private func maybeStartRefineOrSend(stableText: String?) {
+    private func maybeStartRefineOrSend(
+        stableText: String?,
+        stableSnapshot: FocusedElementSnapshot?
+    ) {
         guard config.refineEnabled else {
             fireEnterSend()
             return
@@ -271,12 +299,16 @@ final class AutoSendEngine {
         }
 
         guard let sourceText = stableText?.trimmingCharacters(in: .whitespacesAndNewlines), !sourceText.isEmpty else {
+            if let focusSnapshot = stableSnapshot ?? state.focusSnapshotAtRelease,
+               accessibility.usesTerminalRewrite(for: focusSnapshot.element) {
+                logger.log("terminal 读取失败：\(accessibility.terminalReadFailureSummary(for: focusSnapshot.element))")
+            }
             logger.log("跳过：当前输入框文本不可用，回退原文发送")
             fireEnterSend()
             return
         }
 
-        guard let focusSnapshot = state.focusSnapshotAtRelease else {
+        guard let focusSnapshot = stableSnapshot ?? state.focusSnapshotAtRelease else {
             logger.log("跳过：当前焦点输入框不可用，回退原文发送")
             fireEnterSend()
             return
@@ -290,6 +322,7 @@ final class AutoSendEngine {
         state.phase = .refining
         state.activeRequestID = requestID
         logger.log("开始 refine：provider=\(config.refineProvider.rawValue)，mode=\(config.refineMode.rawValue)，原文长度=\(sourceText.count)，model=\(config.refineModel)")
+        logger.log("refine 输入预览：\(previewForLog(sourceText))")
 
         state.pendingRefineTask = provider.refine(
             text: sourceText,
@@ -363,18 +396,25 @@ final class AutoSendEngine {
 
         switch result {
         case .success(let refinedText):
+            logger.log("refine 输出预览：\(previewForLog(refinedText))")
             if refinedText == sourceText {
                 logger.log("跳过：refine 未改变文本，直接发送")
                 fireEnterSend()
                 return
             }
 
+            if accessibility.usesTerminalRewrite(for: currentSnapshot.element) {
+                logger.log("refine 回写：terminal rewrite 模式")
+            }
             if accessibility.writeText(refinedText, to: currentSnapshot.element) {
                 logger.log("refine 回写成功，长度=\(refinedText.count)")
                 fireEnterSend()
                 return
             }
 
+            if accessibility.usesTerminalRewrite(for: currentSnapshot.element) {
+                logger.log("refine 回写校验失败：\(accessibility.terminalRewriteFailureSummary(expectedText: refinedText, for: currentSnapshot.element))")
+            }
             logger.log("跳过：refine 回写失败，回退原文发送")
             fireEnterSend()
         case .failure(let error):
@@ -384,12 +424,12 @@ final class AutoSendEngine {
     }
 
     private func fireEnterSend() {
-        resetWorkflowState()
         if accessibility.postEnter(enterKeyCode: config.enterKeyCode) {
             logger.log("已发送 Enter")
         } else {
             logger.log("发送 Enter 失败")
         }
+        resetWorkflowState()
     }
 
     private func logSendBasis(forceByMaxWait: Bool = false) {
@@ -427,8 +467,8 @@ final class AutoSendEngine {
         state.pendingPoll = nil
         state.pendingRefineTask?.cancel()
         state.pendingRefineTask = nil
-        resetWorkflowState()
         logger.log("取消待执行操作：\(reason)")
+        resetWorkflowState()
     }
 
     private func prepareForSyntheticActions() {
@@ -441,6 +481,7 @@ final class AutoSendEngine {
     }
 
     private func resetWorkflowState() {
+        restoreConsoleLoggingIfNeeded()
         state.pendingPoll = nil
         state.pendingRefineTask = nil
         state.activeRequestID = nil
@@ -452,6 +493,19 @@ final class AutoSendEngine {
         state.lastValueChangedAt = 0
         state.requiredReleaseDelay = 0
         state.focusSnapshotAtRelease = nil
+        state.loggedPendingTerminalInput = false
+    }
+
+    private func suppressConsoleLoggingForTerminal() {
+        guard !state.consoleLoggingSuppressed else { return }
+        logger.setConsoleOutputEnabled(false)
+        state.consoleLoggingSuppressed = true
+    }
+
+    private func restoreConsoleLoggingIfNeeded() {
+        guard state.consoleLoggingSuppressed else { return }
+        logger.setConsoleOutputEnabled(true)
+        state.consoleLoggingSuppressed = false
     }
 
     private func isDeniedApp(_ bundleID: String) -> Bool {
@@ -466,5 +520,19 @@ final class AutoSendEngine {
             return requiredDelay
         }
         return min(maxWaitAfterRelease, requiredDelay)
+    }
+
+    private func previewForLog(_ text: String) -> String {
+        let normalized = text
+            .replacingOccurrences(of: "\0", with: "")
+            .replacingOccurrences(of: "\n", with: "\\n")
+        if normalized.count <= Self.refineInputPreviewLimit {
+            return normalized
+        }
+        let endIndex = normalized.index(
+            normalized.startIndex,
+            offsetBy: Self.refineInputPreviewLimit
+        )
+        return "\(normalized[..<endIndex])..."
     }
 }

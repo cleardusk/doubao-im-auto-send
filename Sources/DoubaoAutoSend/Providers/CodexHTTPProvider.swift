@@ -316,7 +316,7 @@ extension CodexHTTPProvider {
         startedAt: Date
     ) {
         let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
-        logger.log("refine 成功：provider=codex，transport=\(transport)，source=\(source.rawValue)，mode=\(mode.rawValue)，耗时=\(elapsedMs)ms，结果长度=\(result.count)")
+        logger.log("refine 生成成功：provider=codex，transport=\(transport)，source=\(source.rawValue)，mode=\(mode.rawValue)，耗时=\(elapsedMs)ms，结果长度=\(result.count)")
     }
 }
 

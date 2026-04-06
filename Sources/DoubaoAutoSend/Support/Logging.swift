@@ -55,6 +55,7 @@ final class Logger {
     private let fileLogger: FileLogger?
     private let stdoutColorEnabled = isatty(fileno(stdout)) == 1
     private let stderrColorEnabled = isatty(fileno(stderr)) == 1
+    private var consoleOutputEnabled = true
 
     init(terminalVerbose: Bool, fileLogURL: URL?) {
         self.terminalVerbose = terminalVerbose
@@ -77,11 +78,15 @@ final class Logger {
         let plainLine = "[\(timestamp)] \(message)"
         fileLogger?.writeLine(plainLine)
 
-        guard terminalVerbose else { return }
+        guard terminalVerbose, consoleOutputEnabled else { return }
         let renderedTimestamp = color("[\(timestamp)]", code: "90", enabled: stdoutColorEnabled)
         let renderedMessage = colorizeLogMessage(message)
         print("\(renderedTimestamp) \(renderedMessage)")
         fflush(stdout)
+    }
+
+    func setConsoleOutputEnabled(_ enabled: Bool) {
+        consoleOutputEnabled = enabled
     }
 
     func error(_ message: String) {
@@ -98,6 +103,20 @@ final class Logger {
     }
 
     private func colorizeLogMessage(_ message: String) -> String {
+        if message.hasPrefix("refine 输入预览：") {
+            return colorizedPreviewMessage(
+                message,
+                prefix: "refine 输入预览：",
+                contentCode: "93"
+            )
+        }
+        if message.hasPrefix("refine 输出预览：") {
+            return colorizedPreviewMessage(
+                message,
+                prefix: "refine 输出预览：",
+                contentCode: "92"
+            )
+        }
         if message.hasPrefix("已发送") || message.hasPrefix("refine 回写成功") {
             return color(message, code: "32", enabled: stdoutColorEnabled)
         }
@@ -113,7 +132,7 @@ final class Logger {
         if message.contains("失败") || message.contains("无效") {
             return color(message, code: "31", enabled: stdoutColorEnabled)
         }
-        if message.hasPrefix("观测到") || message.hasPrefix("开始 refine") || message.hasPrefix("refine 成功") {
+        if message.hasPrefix("观测到") || message.hasPrefix("开始 refine") || message.hasPrefix("refine 生成成功") {
             return color(message, code: "36", enabled: stdoutColorEnabled)
         }
         if message.hasPrefix("开始监听") || message.hasPrefix("当前输入法") || message.hasPrefix("计算得到") || message.contains("已按下") || message.contains("已松开") || message.hasPrefix("refine：") || message.hasPrefix("文件日志") {
@@ -125,5 +144,13 @@ final class Logger {
     private func color(_ text: String, code: String, enabled: Bool) -> String {
         guard enabled else { return text }
         return "\u{001B}[\(code)m\(text)\u{001B}[0m"
+    }
+
+    private func colorizedPreviewMessage(_ message: String, prefix: String, contentCode: String) -> String {
+        guard stdoutColorEnabled else { return message }
+        let content = String(message.dropFirst(prefix.count))
+        let renderedPrefix = color(prefix, code: "90", enabled: true)
+        let renderedContent = color(content, code: contentCode, enabled: true)
+        return "\(renderedPrefix)\(renderedContent)"
     }
 }

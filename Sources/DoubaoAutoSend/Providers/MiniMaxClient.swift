@@ -226,7 +226,7 @@ final class MiniMaxClient: RefineProvider {
                     throw MiniMaxClientError.invalidContent
                 }
                 let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
-                logger.log("refine 成功：provider=minimax，transport=sync，endpoint=anthropic，mode=\(mode.rawValue)，model=\(resolvedModel)，耗时=\(elapsedMs)ms，结果长度=\(result.count)")
+                logger.log("refine 生成成功：provider=minimax，transport=sync，endpoint=anthropic，mode=\(mode.rawValue)，model=\(resolvedModel)，耗时=\(elapsedMs)ms，结果长度=\(result.count)")
                 completion(.success(result))
             } catch {
                 completion(.failure(error))
@@ -289,7 +289,7 @@ final class MiniMaxClient: RefineProvider {
                     throw MiniMaxClientError.invalidContent
                 }
                 let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
-                logger.log("refine 成功：provider=minimax，transport=sse，endpoint=anthropic，mode=\(mode.rawValue)，model=\(resolvedModel)，耗时=\(elapsedMs)ms，结果长度=\(result.count)")
+                logger.log("refine 生成成功：provider=minimax，transport=sse，endpoint=anthropic，mode=\(mode.rawValue)，model=\(resolvedModel)，耗时=\(elapsedMs)ms，结果长度=\(result.count)")
                 completion(.success(result))
             } catch is CancellationError {
                 return

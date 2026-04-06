@@ -7,6 +7,7 @@ func printUsage() {
         "  \(terminalCommand("doubao-im-auto-send [--right-ctrl|--left-ctrl|--right-option|--left-option] [--delay-ms 600] [--per-second-postdelay-ms 130] [--stable-ms 450] [--poll-ms 50] [--max-wait-ms 5000] [--min-hold-ms 250] [--log-file PATH] [--no-file-log] [--refine] [--refine-provider minimax|codex] [--refine-mode trim|correct] [--refine-model MODEL] [--refine-codex-transport sse|ws] [--refine-minimax-transport sync|sse|ws] [--refine-timeout-ms MS] [--quiet]"))",
         "  \(terminalCommand("doubao-im-auto-send --check"))",
         "  \(terminalCommand("doubao-im-auto-send --refine-text \"这个事情大概就是这样这样\" [--refine-provider minimax|codex] [--refine-mode trim|correct] [--refine-model MODEL] [--refine-codex-transport sse|ws] [--refine-minimax-transport sync|sse|ws] [--refine-timeout-ms MS]"))",
+        "  \(terminalCommand("doubao-im-auto-send --rewrite-text \"重写后的文本\""))",
         "",
         terminalSectionTitle("行为："),
         "  1. 监听指定修饰键的长按与松开。",
@@ -101,6 +102,32 @@ func runRefineText(_ config: Config, logger: Logger) -> Int32 {
     }
 }
 
+func runRewriteText(_ config: Config, logger: Logger, accessibility: AccessibilityService) -> Int32 {
+    guard let targetText = config.rewriteText else {
+        logger.error("缺少 `--rewrite-text` 的文本内容。")
+        return 1
+    }
+
+    guard let snapshot = accessibility.captureFocusedElementSnapshot() else {
+        logger.error("debug 重写失败：当前焦点输入框不可用。")
+        return 1
+    }
+
+    let currentText = snapshot.text ?? ""
+    logger.log("debug 重写：前台应用=\(accessibility.frontmostApplicationDescription())，原文长度=\(currentText.count)，目标长度=\(targetText.count)")
+
+    if accessibility.writeText(targetText, to: snapshot.element) {
+        let afterText = accessibility.readText(from: snapshot.element) ?? ""
+        logger.log("debug 重写成功：结果长度=\(afterText.count)")
+        print(afterText)
+        return 0
+    }
+
+    let fallbackText = accessibility.readText(from: snapshot.element) ?? "<nil>"
+    logger.error("debug 重写失败：当前读取=\(fallbackText)")
+    return 1
+}
+
 if CommandLine.arguments.contains("--help") {
     printUsage()
     exit(0)
@@ -128,6 +155,10 @@ if CommandLine.arguments.contains("--check") {
 
 if config.refineText != nil {
     exit(runRefineText(config, logger: logger))
+}
+
+if config.rewriteText != nil {
+    exit(runRewriteText(config, logger: logger, accessibility: accessibility))
 }
 
 let refineProvider: RefineProvider?

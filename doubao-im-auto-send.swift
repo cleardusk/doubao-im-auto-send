@@ -7,6 +7,15 @@ import Darwin
 
 struct Config {
     static let defaultLogFilePath = "~/Library/Logs/doubao-im-auto-send/runtime.log"
+    static let defaultDeniedAppBundleIDPrefixes = [
+        "com.microsoft.VSCode",
+        "com.vscodium",
+        "com.todesktop.230313mzl4w4u92",
+        "com.exafunction.windsurf",
+        "com.jetbrains.",
+        "com.apple.dt.Xcode",
+        "com.sublimetext.4"
+    ]
 
     let doubaoInputSourceID = "com.bytedance.inputmethod.doubaoime.pinyin"
     let enterKeyCode: CGKeyCode = 36
@@ -20,6 +29,7 @@ struct Config {
     let minHoldDuration: TimeInterval
     let terminalVerbose: Bool
     let fileLogURL: URL?
+    let deniedAppBundleIDPrefixes: [String]
 
     static func fromArguments() -> Config {
         var watchedModifier: WatchedModifier = .leftOption
@@ -99,7 +109,8 @@ struct Config {
             maxWaitAfterRelease: maxWaitAfterRelease,
             minHoldDuration: minHoldDuration,
             terminalVerbose: terminalVerbose,
-            fileLogURL: fileLogURL
+            fileLogURL: fileLogURL,
+            deniedAppBundleIDPrefixes: defaultDeniedAppBundleIDPrefixes
         )
     }
 }
@@ -254,6 +265,7 @@ final class DoubaoAutoSendHelper {
         log("开始监听 \(config.watchedModifier.label)，最小等待=\(Int(config.minReleaseDelay * 1000))ms，稳定窗口=\(Int(config.stableDuration * 1000))ms，最大等待=\(maxWaitLabel)，按 Esc 可取消自动发送")
         log("当前输入法：\(currentInputSourceID() ?? "未知")")
         log("当前前台应用：\(frontmostApplicationDescription())")
+        log("默认 denylist：常见编辑器类应用")
         log("文件日志：\(config.fileLogURL?.path ?? "关闭")")
         RunLoop.current.run()
     }
@@ -308,6 +320,11 @@ final class DoubaoAutoSendHelper {
 
         guard currentInputSourceID() == config.doubaoInputSourceID else {
             log("跳过：当前输入法不是豆包输入法")
+            return
+        }
+
+        if let bundleID = frontmostBundleID(), isDeniedApp(bundleID) {
+            log("跳过：当前前台应用在默认 denylist 中（\(frontmostApplicationDescription())）")
             return
         }
 
@@ -442,6 +459,10 @@ final class DoubaoAutoSendHelper {
         return "\(name) (\(bundleID))"
     }
 
+    private func isDeniedApp(_ bundleID: String) -> Bool {
+        config.deniedAppBundleIDPrefixes.contains { bundleID.hasPrefix($0) }
+    }
+
     private func focusedTextValue() -> String? {
         guard let app = NSWorkspace.shared.frontmostApplication else {
             return nil
@@ -574,12 +595,13 @@ func printUsage() {
         terminalSectionTitle("行为："),
         "  1. 监听指定修饰键的长按与松开。",
         "  2. 仅在当前输入法为豆包输入法时生效。",
-        "  3. 松手后先满足释放侧下界，再等待文本稳定。",
-        "  4. 如果前台应用、输入法或用户输入发生变化，或按下 Esc，则取消自动发送。",
-        "  5. `--max-wait-ms` 为可选兜底参数；默认关闭。",
-        "  6. 默认同时写入终端和文件日志：\(Config.defaultLogFilePath)",
-        "  7. `--quiet` 仅静默终端；`--no-file-log` 关闭文件日志。",
-        "  8. 条件满足后发送一个 Enter 键事件。"
+        "  3. 默认跳过常见编辑器类应用，如 VS Code、Cursor、Windsurf、JetBrains、Xcode、Sublime。",
+        "  4. 松手后先满足释放侧下界，再等待文本稳定。",
+        "  5. 如果前台应用、输入法或用户输入发生变化，或按下 Esc，则取消自动发送。",
+        "  6. `--max-wait-ms` 为可选兜底参数；默认关闭。",
+        "  7. 默认同时写入终端和文件日志：\(Config.defaultLogFilePath)",
+        "  8. `--quiet` 仅静默终端；`--no-file-log` 关闭文件日志。",
+        "  9. 条件满足后发送一个 Enter 键事件。"
     ]
     print(usageLines.joined(separator: "\n"))
 }
@@ -598,11 +620,13 @@ if CommandLine.arguments.contains("--check") {
         Unmanaged<CFString>.fromOpaque($0).takeUnretainedValue() as String
     } ?? "未知"
     let frontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "未知"
+    let denylistStatus = Config.defaultDeniedAppBundleIDPrefixes.contains { frontmost.hasPrefix($0) } ? "是" : "否"
     let checkLines = [
         terminalSectionTitle("当前环境："),
         "\(terminalLabel("当前输入法 ID:")) \(inputSourceID)",
         "\(terminalLabel("当前输入法名称:")) \(localizedName)",
-        "\(terminalLabel("当前前台应用:")) \(frontmost)"
+        "\(terminalLabel("当前前台应用:")) \(frontmost)",
+        "\(terminalLabel("命中默认 denylist:")) \(denylistStatus)"
     ]
     print(checkLines.joined(separator: "\n"))
     exit(0)

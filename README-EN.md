@@ -7,6 +7,18 @@
 ## Installation
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/cleardusk/doubao-im-auto-send/main/install.sh | bash
+```
+
+If you prefer cloning first:
+
+```bash
+git clone --depth 1 https://github.com/cleardusk/doubao-im-auto-send.git && bash doubao-im-auto-send/install.sh
+```
+
+Inside the repository directory, you can also run:
+
+```bash
 bash install.sh
 ```
 

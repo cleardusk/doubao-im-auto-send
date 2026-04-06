@@ -7,6 +7,18 @@
 ## 安装
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/cleardusk/doubao-im-auto-send/main/install.sh | bash
+```
+
+如果你更想先拉仓库再安装：
+
+```bash
+git clone --depth 1 https://github.com/cleardusk/doubao-im-auto-send.git && bash doubao-im-auto-send/install.sh
+```
+
+在仓库目录内也可以直接执行：
+
+```bash
 bash install.sh
 ```
 

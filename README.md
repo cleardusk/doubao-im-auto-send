@@ -109,16 +109,17 @@ doubao-im-auto-send --refine-text "这个事情大概就是这样这样"
 
 ## 相关文件
 
-- [doubao-im-auto-send.swift](./doubao-im-auto-send.swift)：主脚本
-- [Config.swift](./Config.swift)：配置与参数解析
-- [AutoSendEngine.swift](./AutoSendEngine.swift)：主状态机与发送 pipeline
-- [Accessibility.swift](./Accessibility.swift)：焦点输入框读取与回写
-- [MiniMaxClient.swift](./MiniMaxClient.swift)：MiniMax CN API 客户端
-- [RefineProvider.swift](./RefineProvider.swift)：refine provider 抽象与分流
-- [CodexHTTPProvider.swift](./CodexHTTPProvider.swift)：Codex SSE provider
-- [CodexWebSocketTransport.swift](./CodexWebSocketTransport.swift)：Codex WebSocket transport
-- [CodexOAuthStore.swift](./CodexOAuthStore.swift)：本地 Codex/OpenClaw token 读取
-- [HTTPTransportSupport.swift](./HTTPTransportSupport.swift)：URLSession 与代理支持
-- [Logging.swift](./Logging.swift)：终端与文件日志
+- [Package.swift](./Package.swift)：最小 SwiftPM 包定义
+- [main.swift](./Sources/DoubaoAutoSend/main.swift)：CLI 入口
+- [Config.swift](./Sources/DoubaoAutoSend/Support/Config.swift)：配置与参数解析
+- [AutoSendEngine.swift](./Sources/DoubaoAutoSend/App/AutoSendEngine.swift)：主状态机与发送 pipeline
+- [Accessibility.swift](./Sources/DoubaoAutoSend/App/Accessibility.swift)：焦点输入框读取与回写
+- [MiniMaxClient.swift](./Sources/DoubaoAutoSend/Providers/MiniMaxClient.swift)：MiniMax CN API 客户端
+- [RefineProvider.swift](./Sources/DoubaoAutoSend/Providers/RefineProvider.swift)：refine provider 抽象与分流
+- [CodexHTTPProvider.swift](./Sources/DoubaoAutoSend/Providers/CodexHTTPProvider.swift)：Codex SSE provider
+- [CodexWebSocketTransport.swift](./Sources/DoubaoAutoSend/Providers/CodexWebSocketTransport.swift)：Codex WebSocket transport
+- [CodexOAuthStore.swift](./Sources/DoubaoAutoSend/Providers/CodexOAuthStore.swift)：本地 Codex/OpenClaw token 读取
+- [HTTPTransportSupport.swift](./Sources/DoubaoAutoSend/Support/HTTPTransportSupport.swift)：URLSession 与代理支持
+- [Logging.swift](./Sources/DoubaoAutoSend/Support/Logging.swift)：终端与文件日志
 - [install.sh](./install.sh)：一键安装脚本
 - [doubao-im-auto-send-model.md](./doubao-im-auto-send-model.md)：详细建模与参数说明

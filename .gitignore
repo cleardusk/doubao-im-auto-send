@@ -1,2 +1,4 @@
 .vscode/
+.build/
+.swiftpm/
 **/*.DS_Store

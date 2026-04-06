@@ -94,48 +94,43 @@ func runRefineText(_ config: Config, logger: Logger) -> Int32 {
     }
 }
 
-@main
-struct DoubaoAutoSendCLI {
-    static func main() {
-        if CommandLine.arguments.contains("--help") {
-            printUsage()
-            exit(0)
-        }
-
-        let config = Config.fromArguments()
-        let logger = Logger(terminalVerbose: config.terminalVerbose, fileLogURL: config.fileLogURL)
-        let accessibility = AccessibilityService()
-
-        if let startupError = logger.startupError {
-            logger.error(startupError)
-        }
-
-        if CommandLine.arguments.contains("--check") {
-            printCheck(config: config, accessibility: accessibility)
-            exit(0)
-        }
-
-        if config.refineText != nil {
-            exit(runRefineText(config, logger: logger))
-        }
-
-        let refineProvider: RefineProvider?
-        if config.refineEnabled {
-            do {
-                refineProvider = try makeRefineProvider(config: config, logger: logger)
-            } catch {
-                logger.error(error.localizedDescription)
-                exit(1)
-            }
-        } else {
-            refineProvider = nil
-        }
-
-        AutoSendEngine(
-            config: config,
-            logger: logger,
-            accessibility: accessibility,
-            refineProvider: refineProvider
-        ).run()
-    }
+if CommandLine.arguments.contains("--help") {
+    printUsage()
+    exit(0)
 }
+
+let config = Config.fromArguments()
+let logger = Logger(terminalVerbose: config.terminalVerbose, fileLogURL: config.fileLogURL)
+let accessibility = AccessibilityService()
+
+if let startupError = logger.startupError {
+    logger.error(startupError)
+}
+
+if CommandLine.arguments.contains("--check") {
+    printCheck(config: config, accessibility: accessibility)
+    exit(0)
+}
+
+if config.refineText != nil {
+    exit(runRefineText(config, logger: logger))
+}
+
+let refineProvider: RefineProvider?
+if config.refineEnabled {
+    do {
+        refineProvider = try makeRefineProvider(config: config, logger: logger)
+    } catch {
+        logger.error(error.localizedDescription)
+        exit(1)
+    }
+} else {
+    refineProvider = nil
+}
+
+AutoSendEngine(
+    config: config,
+    logger: logger,
+    accessibility: accessibility,
+    refineProvider: refineProvider
+).run()

@@ -79,7 +79,7 @@ t_{\mathrm{hold}} = t_{\mathrm{release}} - t_{\mathrm{press}}
 ### 最简运行
 
 ```bash
-swift doubao-im-auto-send.swift
+swift run doubao-im-auto-send
 ```
 
 使用脚本当前默认参数直接运行。
@@ -87,7 +87,7 @@ swift doubao-im-auto-send.swift
 ### 显式全参数运行
 
 ```bash
-swift doubao-im-auto-send.swift \
+swift run doubao-im-auto-send -- \
   --left-option \
   --delay-ms 600 \
   --per-second-postdelay-ms 130 \
@@ -102,7 +102,7 @@ swift doubao-im-auto-send.swift \
 ### 含超时兜底的全参数运行
 
 ```bash
-swift doubao-im-auto-send.swift \
+swift run doubao-im-auto-send -- \
   --left-option \
   --delay-ms 600 \
   --per-second-postdelay-ms 130 \

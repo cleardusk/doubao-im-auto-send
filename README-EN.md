@@ -109,16 +109,17 @@ Terminal log example (colors are enabled only in a TTY terminal):
 
 ## Related Files
 
-- [doubao-im-auto-send.swift](./doubao-im-auto-send.swift): primary script
-- [Config.swift](./Config.swift): config and CLI argument parsing
-- [AutoSendEngine.swift](./AutoSendEngine.swift): main state machine and send pipeline
-- [Accessibility.swift](./Accessibility.swift): focused element read/write helpers
-- [MiniMaxClient.swift](./MiniMaxClient.swift): MiniMax CN API client
-- [RefineProvider.swift](./RefineProvider.swift): refine provider abstraction and dispatch
-- [CodexHTTPProvider.swift](./CodexHTTPProvider.swift): Codex SSE provider
-- [CodexWebSocketTransport.swift](./CodexWebSocketTransport.swift): Codex WebSocket transport
-- [CodexOAuthStore.swift](./CodexOAuthStore.swift): local Codex/OpenClaw token loading
-- [HTTPTransportSupport.swift](./HTTPTransportSupport.swift): URLSession and proxy support
-- [Logging.swift](./Logging.swift): terminal and file logging
+- [Package.swift](./Package.swift): minimal SwiftPM package definition
+- [main.swift](./Sources/DoubaoAutoSend/main.swift): CLI entry point
+- [Config.swift](./Sources/DoubaoAutoSend/Support/Config.swift): config and CLI argument parsing
+- [AutoSendEngine.swift](./Sources/DoubaoAutoSend/App/AutoSendEngine.swift): main state machine and send pipeline
+- [Accessibility.swift](./Sources/DoubaoAutoSend/App/Accessibility.swift): focused element read/write helpers
+- [MiniMaxClient.swift](./Sources/DoubaoAutoSend/Providers/MiniMaxClient.swift): MiniMax CN API client
+- [RefineProvider.swift](./Sources/DoubaoAutoSend/Providers/RefineProvider.swift): refine provider abstraction and dispatch
+- [CodexHTTPProvider.swift](./Sources/DoubaoAutoSend/Providers/CodexHTTPProvider.swift): Codex SSE provider
+- [CodexWebSocketTransport.swift](./Sources/DoubaoAutoSend/Providers/CodexWebSocketTransport.swift): Codex WebSocket transport
+- [CodexOAuthStore.swift](./Sources/DoubaoAutoSend/Providers/CodexOAuthStore.swift): local Codex/OpenClaw token loading
+- [HTTPTransportSupport.swift](./Sources/DoubaoAutoSend/Support/HTTPTransportSupport.swift): URLSession and proxy support
+- [Logging.swift](./Sources/DoubaoAutoSend/Support/Logging.swift): terminal and file logging
 - [install.sh](./install.sh): one-command installer
 - [doubao-im-auto-send-model.md](./doubao-im-auto-send-model.md): detailed model and parameter explanation

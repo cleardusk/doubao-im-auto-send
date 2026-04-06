@@ -10,7 +10,7 @@
 bash install.sh
 ```
 
-默认安装到 `~/.local/bin/doubao-im-auto-send`。如果该目录不在 `PATH` 中，可直接用完整路径运行或者将其添加到 `PATH` 中。运行命令为：**`doubao-im-auto-send`**。
+> 默认安装到 `~/.local/bin/doubao-im-auto-send`。如果该目录不在 `PATH` 中，可直接用完整路径运行或者将其添加到 `PATH` 中。运行命令为：**`doubao-im-auto-send`**。
 
 ## 快速开始
 

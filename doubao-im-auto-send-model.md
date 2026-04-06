@@ -49,6 +49,8 @@ t_{\mathrm{hold}} = t_{\mathrm{release}} - t_{\mathrm{press}}
 | `--min-hold-ms` | 最短按住时长；低于该阈值则忽略本次触发 | 250 ms |
 
 说明：`--max-wait-ms` 属于实现层兜底参数，不属于核心建模公式；默认关闭，仅在需要超时强制发送时显式开启。
+说明：当前实现默认同时写入文件日志，路径为 `~/Library/Logs/doubao-im-auto-send/runtime.log`；`--quiet` 仅静默终端输出，`--no-file-log` 可关闭文件日志。
+说明：当前实现默认跳过常见编辑器类应用，如 VS Code、Cursor、Windsurf、JetBrains、Xcode、Sublime。
 
 ## 含义
 

@@ -50,6 +50,6 @@ Terminal log example (colors are enabled only in a TTY terminal):
 
 ## Related Files
 
-- [doubao-im-auto-send.swift](./doubao-im-auto-send.swift): main script
+- [doubao-im-auto-send.swift](./doubao-im-auto-send.swift): primary script
 - [install.sh](./install.sh): one-command installer
 - [doubao-im-auto-send-model.md](./doubao-im-auto-send-model.md): detailed model and parameter explanation

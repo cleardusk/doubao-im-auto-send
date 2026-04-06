@@ -6,7 +6,8 @@ REPO_BRANCH="${REPO_BRANCH:-main}"
 RAW_URL="${RAW_URL:-https://raw.githubusercontent.com/cleardusk/doubao-im-auto-send/${REPO_BRANCH}/${SOURCE_FILE}}"
 REPO_URL="${REPO_URL:-https://github.com/cleardusk/doubao-im-auto-send.git}"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_PATH="${BASH_SOURCE[0]:-}"
+SCRIPT_DIR="$(cd "$(dirname "${SCRIPT_PATH:-.}")" && pwd)"
 TARGET_DIR="${HOME}/.local/bin"
 TARGET_PATH="${TARGET_DIR}/doubao-im-auto-send"
 

@@ -143,16 +143,51 @@ final class AccessibilityService {
         return false
     }
 
-    func postEnter(enterKeyCode: CGKeyCode) -> Bool {
+    func postEnter(
+        enterKeyCode: CGKeyCode,
+        for element: AXUIElement? = nil,
+        expectedTextBeforeSend: String? = nil
+    ) -> Bool {
         guard let source = CGEventSource(stateID: .combinedSessionState) else {
             return false
         }
 
-        let down = CGEvent(keyboardEventSource: source, virtualKey: enterKeyCode, keyDown: true)
-        let up = CGEvent(keyboardEventSource: source, virtualKey: enterKeyCode, keyDown: false)
-        down?.post(tap: .cghidEventTap)
-        up?.post(tap: .cghidEventTap)
-        return true
+        let normalizedExpectedBeforeSend: String?
+        if let element, isTerminalShellElement(element) {
+            normalizedExpectedBeforeSend = normalizeTerminalText(
+                expectedTextBeforeSend ?? terminalEditContext(from: element)?.inputText ?? ""
+            )
+            Thread.sleep(forTimeInterval: 0.12)
+        } else {
+            normalizedExpectedBeforeSend = nil
+        }
+
+        guard postKeyPress(keyCode: enterKeyCode, source: source) else {
+            return false
+        }
+
+        guard let element,
+              isTerminalShellElement(element),
+              let normalizedExpectedBeforeSend,
+              !normalizedExpectedBeforeSend.isEmpty else {
+            return true
+        }
+
+        if waitForTerminalSubmission(
+            in: element,
+            previousInput: normalizedExpectedBeforeSend
+        ) {
+            return true
+        }
+
+        Thread.sleep(forTimeInterval: 0.08)
+        guard postKeyPress(keyCode: 76, source: source) else {
+            return false
+        }
+        return waitForTerminalSubmission(
+            in: element,
+            previousInput: normalizedExpectedBeforeSend
+        )
     }
 
     private func readValueOnly(from element: AXUIElement) -> String? {
@@ -205,6 +240,23 @@ final class AccessibilityService {
         } while Date() < deadline
 
         return terminalInputMatches(expectedText, in: element)
+    }
+
+    private func waitForTerminalSubmission(in element: AXUIElement, previousInput: String) -> Bool {
+        let timeout: TimeInterval = 0.8
+        let pollInterval: TimeInterval = 0.03
+        let deadline = Date().addingTimeInterval(timeout)
+
+        repeat {
+            let currentInput = normalizeTerminalText(terminalEditContext(from: element)?.inputText ?? "")
+            if currentInput.isEmpty || currentInput != previousInput {
+                return true
+            }
+            Thread.sleep(forTimeInterval: pollInterval)
+        } while Date() < deadline
+
+        let finalInput = normalizeTerminalText(terminalEditContext(from: element)?.inputText ?? "")
+        return finalInput.isEmpty || finalInput != previousInput
     }
 
     private func terminalInputMatches(_ expectedText: String, in element: AXUIElement) -> Bool {
@@ -628,6 +680,10 @@ final class AccessibilityService {
             return false
         }
 
+        if looksLikeRuntimeLogLine(trimmed) {
+            return true
+        }
+
         let lowercase = trimmed.lowercased()
         let codexHintTokens = [
             "tab to queue message",
@@ -660,6 +716,16 @@ final class AccessibilityService {
         }
 
         return false
+    }
+
+    private func looksLikeRuntimeLogLine(_ line: String) -> Bool {
+        guard line.hasPrefix("[20"),
+              let closingBracketIndex = line.firstIndex(of: "]") else {
+            return false
+        }
+
+        let timestampPortion = line[line.index(after: line.startIndex)..<closingBracketIndex]
+        return timestampPortion.contains("T")
     }
 
     private func isTerminalShellElement(_ element: AXUIElement) -> Bool {
@@ -739,6 +805,16 @@ final class AccessibilityService {
             down.post(tap: .cghidEventTap)
             up.post(tap: .cghidEventTap)
         }
+        return true
+    }
+
+    private func postKeyPress(keyCode: CGKeyCode, source: CGEventSource) -> Bool {
+        guard let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) else {
+            return false
+        }
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
         return true
     }
 

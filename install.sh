@@ -1,71 +1,41 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_OWNER="cleardusk"
-REPO_NAME="doubao-im-auto-send"
-REPO_BRANCH="${REPO_BRANCH:-main}"
-REPO_URL="${REPO_URL:-https://github.com/${REPO_OWNER}/${REPO_NAME}.git}"
-RAW_BASE_URL="${RAW_BASE_URL:-https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${REPO_BRANCH}}"
 SOURCE_FILE="doubao-im-auto-send.swift"
+REPO_BRANCH="${REPO_BRANCH:-main}"
+RAW_URL="${RAW_URL:-https://raw.githubusercontent.com/cleardusk/doubao-im-auto-send/${REPO_BRANCH}/${SOURCE_FILE}}"
+REPO_URL="${REPO_URL:-https://github.com/cleardusk/doubao-im-auto-send.git}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET_DIR="${HOME}/.local/bin"
 TARGET_PATH="${TARGET_DIR}/doubao-im-auto-send"
 
-if ! command -v swiftc >/dev/null 2>&1; then
+command -v swiftc >/dev/null 2>&1 || {
   echo "错误: 未找到 swiftc，请先安装 Xcode Command Line Tools 或 Swift。" >&2
   exit 1
-fi
-
-cleanup() {
-  if [[ -n "${TMP_DIR:-}" && -d "${TMP_DIR}" ]]; then
-    rm -rf "${TMP_DIR}"
-  fi
 }
 
-trap cleanup EXIT
+trap '[[ -n "${TMP_DIR:-}" ]] && rm -rf "${TMP_DIR}"' EXIT
 
-resolve_source_path() {
-  local local_source="${SCRIPT_DIR}/${SOURCE_FILE}"
-  if [[ -f "${local_source}" ]]; then
-    printf '%s\n' "${local_source}"
-    return 0
-  fi
-
+SOURCE_PATH="${SCRIPT_DIR}/${SOURCE_FILE}"
+if [[ ! -f "${SOURCE_PATH}" ]]; then
   TMP_DIR="$(mktemp -d)"
-  local downloaded_source="${TMP_DIR}/${SOURCE_FILE}"
-  local download_url="${RAW_BASE_URL}/${SOURCE_FILE}"
+  SOURCE_PATH="${TMP_DIR}/${SOURCE_FILE}"
 
-  if command -v curl >/dev/null 2>&1; then
-    if curl -fsSL "${download_url}" -o "${downloaded_source}"; then
-      printf '%s\n' "${downloaded_source}"
-      return 0
-    fi
-  elif command -v wget >/dev/null 2>&1; then
-    if wget -qO "${downloaded_source}" "${download_url}"; then
-      printf '%s\n' "${downloaded_source}"
-      return 0
-    fi
+  if ! curl -fsSL "${RAW_URL}" -o "${SOURCE_PATH}" \
+    && ! { command -v wget >/dev/null 2>&1 && wget -qO "${SOURCE_PATH}" "${RAW_URL}"; }; then
+    command -v git >/dev/null 2>&1 || {
+      echo "错误: 无法下载 ${SOURCE_FILE}，且未找到 git。" >&2
+      exit 1
+    }
+    git clone --depth 1 --branch "${REPO_BRANCH}" "${REPO_URL}" "${TMP_DIR}/repo" >/dev/null 2>&1
+    SOURCE_PATH="${TMP_DIR}/repo/${SOURCE_FILE}"
+    [[ -f "${SOURCE_PATH}" ]] || {
+      echo "错误: 下载失败，且仓库中未找到 ${SOURCE_FILE}。" >&2
+      exit 1
+    }
   fi
-
-  if ! command -v git >/dev/null 2>&1; then
-    echo "错误: 未找到 git，且无法从 ${download_url} 下载 ${SOURCE_FILE}。" >&2
-    exit 1
-  fi
-
-  local repo_checkout="${TMP_DIR}/repo"
-  git clone --depth 1 "${REPO_URL}" "${repo_checkout}" >/dev/null 2>&1
-
-  local fallback_source="${repo_checkout}/${SOURCE_FILE}"
-  if [[ ! -f "${fallback_source}" ]]; then
-    echo "错误: 下载失败，且在临时仓库中未找到 ${SOURCE_FILE}。" >&2
-    exit 1
-  fi
-
-  printf '%s\n' "${fallback_source}"
-}
-
-SOURCE_PATH="$(resolve_source_path)"
+fi
 
 mkdir -p "${TARGET_DIR}"
 swiftc "${SOURCE_PATH}" -o "${TARGET_PATH}"

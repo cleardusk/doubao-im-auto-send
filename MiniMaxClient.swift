@@ -1,4 +1,3 @@
-import CFNetwork
 import Foundation
 
 struct MiniMaxEnvironmentStatus {
@@ -74,7 +73,9 @@ private struct MiniMaxAPIErrorResponse: Decodable {
     let error: APIError?
 }
 
-final class MiniMaxClient {
+final class MiniMaxClient: RefineProvider {
+    let kind: RefineProviderKind = .minimax
+
     private let logger: Logger
     private let apiKey: String
     private let baseURL: URL
@@ -91,12 +92,7 @@ final class MiniMaxClient {
         }
         self.apiKey = apiKey
         self.baseURL = try Self.makeBaseURL(from: status.apiHost)
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        if let proxyDictionary = Self.proxyDictionary(from: environment) {
-            configuration.connectionProxyDictionary = proxyDictionary
-        }
-        self.session = URLSession(configuration: configuration)
+        self.session = HTTPTransportSupport.makeEphemeralSession(environment: environment)
     }
 
     static func environmentStatus(from environment: [String: String] = ProcessInfo.processInfo.environment) -> MiniMaxEnvironmentStatus {
@@ -117,12 +113,12 @@ final class MiniMaxClient {
         model: String,
         timeout: TimeInterval,
         completion: @escaping (Result<String, Error>) -> Void
-    ) -> URLSessionDataTask {
+    ) -> RefineTask {
         let payload = MiniMaxChatCompletionRequest(
             model: model,
             messages: [
                 .init(role: "system", content: mode.systemPrompt),
-                .init(role: "user", content: text)
+                .init(role: "user", content: mode.userPrompt(for: text))
             ]
         )
 
@@ -136,7 +132,7 @@ final class MiniMaxClient {
             request.httpBody = try JSONEncoder().encode(payload)
         } catch {
             completion(.failure(error))
-            return URLSession.shared.dataTask(with: URLRequest(url: baseURL))
+            return NoopRefineTask()
         }
 
         let startedAt = Date()
@@ -167,12 +163,12 @@ final class MiniMaxClient {
                 guard let content = decoded.choices.first?.message.content else {
                     throw MiniMaxClientError.invalidContent
                 }
-                let result = Self.sanitizeContent(content)
+                let result = RefineSanitizer.sanitizeMiniMax(content)
                 guard !result.isEmpty else {
                     throw MiniMaxClientError.invalidContent
                 }
                 let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
-                logger.log("refine 成功：mode=\(mode.rawValue)，耗时=\(elapsedMs)ms，结果长度=\(result.count)")
+                logger.log("refine 成功：provider=minimax，mode=\(mode.rawValue)，耗时=\(elapsedMs)ms，结果长度=\(result.count)")
                 completion(.success(result))
             } catch {
                 completion(.failure(error))
@@ -180,30 +176,6 @@ final class MiniMaxClient {
         }
         task.resume()
         return task
-    }
-
-    func refineSync(
-        text: String,
-        mode: RefineMode,
-        model: String,
-        timeout: TimeInterval
-    ) throws -> String {
-        let semaphore = DispatchSemaphore(value: 0)
-        let box = LockedResultBox<String>()
-        let task = refine(text: text, mode: mode, model: model, timeout: timeout) { result in
-            box.result = result
-            semaphore.signal()
-        }
-
-        if semaphore.wait(timeout: .now() + timeout + 1) == .timedOut {
-            task.cancel()
-            throw MiniMaxClientError.timedOut
-        }
-
-        guard let result = box.result else {
-            throw MiniMaxClientError.invalidResponse
-        }
-        return try result.get()
     }
 
     private static func validateHost(_ host: String) -> String? {
@@ -243,80 +215,4 @@ final class MiniMaxClient {
         return String(data: data.prefix(200), encoding: .utf8)
     }
 
-    private static func sanitizeContent(_ content: String) -> String {
-        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let thinkRange = trimmed.range(of: "</think>") else {
-            return trimmed
-        }
-        return trimmed[thinkRange.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-}
-
-private extension MiniMaxClient {
-    struct ProxySpec {
-        let host: String
-        let port: Int
-        let isSOCKS: Bool
-    }
-
-    static func proxyDictionary(from environment: [String: String]) -> [AnyHashable: Any]? {
-        let httpProxy = parseProxy(environment["HTTP_PROXY"] ?? environment["http_proxy"] ?? environment["ALL_PROXY"] ?? environment["all_proxy"])
-        let httpsProxy = parseProxy(environment["HTTPS_PROXY"] ?? environment["https_proxy"] ?? environment["ALL_PROXY"] ?? environment["all_proxy"] ?? environment["HTTP_PROXY"] ?? environment["http_proxy"])
-
-        var dictionary: [AnyHashable: Any] = [:]
-
-        if let httpProxy {
-            if httpProxy.isSOCKS {
-                dictionary[kCFNetworkProxiesSOCKSEnable as String] = 1
-                dictionary[kCFNetworkProxiesSOCKSProxy as String] = httpProxy.host
-                dictionary[kCFNetworkProxiesSOCKSPort as String] = httpProxy.port
-            } else {
-                dictionary[kCFNetworkProxiesHTTPEnable as String] = 1
-                dictionary[kCFNetworkProxiesHTTPProxy as String] = httpProxy.host
-                dictionary[kCFNetworkProxiesHTTPPort as String] = httpProxy.port
-            }
-        }
-
-        if let httpsProxy {
-            if httpsProxy.isSOCKS {
-                dictionary[kCFNetworkProxiesSOCKSEnable as String] = 1
-                dictionary[kCFNetworkProxiesSOCKSProxy as String] = httpsProxy.host
-                dictionary[kCFNetworkProxiesSOCKSPort as String] = httpsProxy.port
-            } else {
-                dictionary[kCFNetworkProxiesHTTPSEnable as String] = 1
-                dictionary[kCFNetworkProxiesHTTPSProxy as String] = httpsProxy.host
-                dictionary[kCFNetworkProxiesHTTPSPort as String] = httpsProxy.port
-            }
-        }
-
-        return dictionary.isEmpty ? nil : dictionary
-    }
-
-    static func parseProxy(_ value: String?) -> ProxySpec? {
-        guard let value, !value.isEmpty, let components = URLComponents(string: value), let host = components.host else {
-            return nil
-        }
-
-        let scheme = components.scheme?.lowercased() ?? "http"
-        let port = components.port ?? (scheme == "https" ? 443 : 80)
-        return ProxySpec(host: host, port: port, isSOCKS: scheme.hasPrefix("socks"))
-    }
-}
-
-private final class LockedResultBox<T>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var storage: Result<T, Error>?
-
-    var result: Result<T, Error>? {
-        get {
-            lock.lock()
-            defer { lock.unlock() }
-            return storage
-        }
-        set {
-            lock.lock()
-            storage = newValue
-            lock.unlock()
-        }
-    }
 }

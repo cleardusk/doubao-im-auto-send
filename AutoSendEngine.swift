@@ -20,7 +20,7 @@ private final class SessionState {
     var lastValueChangedAt: CFAbsoluteTime = 0
     var requiredReleaseDelay: TimeInterval = 0
     var pendingPoll: DispatchWorkItem?
-    var pendingRefineTask: URLSessionDataTask?
+    var pendingRefineTask: RefineTask?
     var activeRequestID: UUID?
     var focusSnapshotAtRelease: FocusedElementSnapshot?
 }
@@ -29,7 +29,7 @@ final class AutoSendEngine {
     private let config: Config
     private let logger: Logger
     private let accessibility: AccessibilityService
-    private let miniMaxClient: MiniMaxClient?
+    private let refineProvider: RefineProvider?
     private let state = SessionState()
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -38,12 +38,12 @@ final class AutoSendEngine {
         config: Config,
         logger: Logger,
         accessibility: AccessibilityService,
-        miniMaxClient: MiniMaxClient?
+        refineProvider: RefineProvider?
     ) {
         self.config = config
         self.logger = logger
         self.accessibility = accessibility
-        self.miniMaxClient = miniMaxClient
+        self.refineProvider = refineProvider
     }
 
     func run() {
@@ -94,7 +94,7 @@ final class AutoSendEngine {
         logger.log("默认 denylist：常见编辑器类应用")
         logger.log("文件日志：\(config.fileLogURL?.path ?? "关闭")")
         if config.refineEnabled {
-            logger.log("refine：开启，mode=\(config.refineMode.rawValue)，model=\(config.refineModel)，timeout=\(Int(config.refineTimeout * 1000))ms")
+            logger.log("refine：开启，provider=\(config.refineProvider.rawValue)，mode=\(config.refineMode.rawValue)，model=\(config.refineModel)，timeout=\(Int(config.refineTimeout * 1000))ms")
         } else {
             logger.log("refine：关闭")
         }
@@ -257,7 +257,7 @@ final class AutoSendEngine {
             return
         }
 
-        guard let miniMaxClient else {
+        guard let refineProvider else {
             logger.log("跳过：refine 客户端不可用，回退原文发送")
             fireEnterSend()
             return
@@ -275,16 +275,16 @@ final class AutoSendEngine {
             return
         }
 
-        startRefine(sourceText: sourceText, focusSnapshot: focusSnapshot, client: miniMaxClient)
+        startRefine(sourceText: sourceText, focusSnapshot: focusSnapshot, provider: refineProvider)
     }
 
-    private func startRefine(sourceText: String, focusSnapshot: FocusedElementSnapshot, client: MiniMaxClient) {
+    private func startRefine(sourceText: String, focusSnapshot: FocusedElementSnapshot, provider: RefineProvider) {
         let requestID = UUID()
         state.phase = .refining
         state.activeRequestID = requestID
-        logger.log("开始 refine：mode=\(config.refineMode.rawValue)，原文长度=\(sourceText.count)，model=\(config.refineModel)")
+        logger.log("开始 refine：provider=\(config.refineProvider.rawValue)，mode=\(config.refineMode.rawValue)，原文长度=\(sourceText.count)，model=\(config.refineModel)")
 
-        state.pendingRefineTask = client.refine(
+        state.pendingRefineTask = provider.refine(
             text: sourceText,
             mode: config.refineMode,
             model: config.refineModel,

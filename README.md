@@ -40,6 +40,9 @@ doubao-im-auto-send --refine
 # 显式使用 MiniMax
 doubao-im-auto-send --refine --refine-provider minimax
 
+# 显式使用 MiniMax SSE
+doubao-im-auto-send --refine --refine-provider minimax --refine-minimax-transport sse
+
 # 显式使用 Codex SSE
 doubao-im-auto-send --refine --refine-provider codex --refine-codex-transport sse
 
@@ -74,13 +77,18 @@ doubao-im-auto-send --refine-text "这个事情大概就是这样这样"
 - 默认 refine 模型：`gpt-5.4-mini`
 - 默认 refine 超时：`10000ms`
 - 默认 Codex transport：`sse`
+- 默认 MiniMax transport：`sync`
 
 ## Refine Provider 配置
 
 - `minimax`
 - `MINIMAX_API_KEY`：必填；启用 `--refine --refine-provider minimax` 或使用 `--refine-text --refine-provider minimax` 时需要
-- `MINIMAX_API_HOST`：可选；默认 `https://api.minimaxi.com`
-- 当前实现走 OpenAI 兼容接口：`/v1/chat/completions`
+- `MINIMAX_API_HOST`：可选；默认 `https://api.minimaxi.com`。也兼容 `https://api.minimaxi.com/v1`、`https://api.minimaxi.com/anthropic`、`https://api.minimaxi.com/anthropic/v1`
+- 当前实现走 Anthropic 兼容接口：`/anthropic/v1/messages`
+- 支持 `--refine-minimax-transport sync|sse|ws`
+- `sync` 是默认模式，逻辑最简单，也最接近 OpenClaw 当前 MiniMax provider 的 HTTP 完成式调用
+- `sse` 使用 Anthropic 兼容流式事件；当前仍然要等最终文本完成后才会回写并发送
+- `ws` 会显式报不支持；官方文档和 OpenClaw 当前都没有 MiniMax 文本 WebSocket provider
 
 - `codex`
 - 需要本机已有 `openclaw models auth login --provider openai-codex` 或 `codex login` 登录态
@@ -94,6 +102,7 @@ doubao-im-auto-send --refine-text "这个事情大概就是这样这样"
 - 没反应：先检查权限、当前输入法是否为豆包、按住时长是否低于 `250ms`
 - 没自动发送：可能被 `Esc`、新的键盘/鼠标输入、输入法切换或前台应用切换打断
 - refine 没生效：先用 `doubao-im-auto-send --check` 确认当前 provider、token 或 `MINIMAX_API_KEY` / `MINIMAX_API_HOST` 状态
+- MiniMax 太慢：可试 `--refine-provider minimax --refine-minimax-transport sse`，但总完成时间不一定明显短于 `sync`
 - Codex 太慢：先试 `--refine-codex-transport ws`；如果只跑单次命令，`sse` 往往更稳
 - 某些输入框效果不稳定：脚本依赖辅助功能读取文本，部分输入框可能不可稳定读取
 - 只想看终端日志：加 `--no-file-log`；只想静默终端：加 `--quiet`

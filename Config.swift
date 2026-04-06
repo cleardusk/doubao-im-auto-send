@@ -72,6 +72,12 @@ enum CodexTransportMode: String {
     case ws
 }
 
+enum MiniMaxTransportMode: String {
+    case sync
+    case sse
+    case ws
+}
+
 enum WatchedModifier {
     case leftControl
     case rightControl
@@ -140,6 +146,7 @@ struct Config {
     let refineModel: String
     let refineTimeout: TimeInterval
     let refineCodexTransport: CodexTransportMode
+    let refineMiniMaxTransport: MiniMaxTransportMode
     let refineText: String?
 
     static func fromArguments() -> Config {
@@ -161,6 +168,7 @@ struct Config {
         var refineTimeout = refineProvider.defaultTimeout
         var refineTimeoutExplicitlySet = false
         var refineCodexTransport = CodexTransportMode.sse
+        var refineMiniMaxTransport = MiniMaxTransportMode.sync
         var refineText: String?
 
         var iterator = CommandLine.arguments.dropFirst().makeIterator()
@@ -226,6 +234,10 @@ struct Config {
                 if let value = iterator.next(), let transport = CodexTransportMode(rawValue: value) {
                     refineCodexTransport = transport
                 }
+            case "--refine-minimax-transport":
+                if let value = iterator.next(), let transport = MiniMaxTransportMode(rawValue: value) {
+                    refineMiniMaxTransport = transport
+                }
             case "--refine-timeout-ms":
                 if let value = iterator.next(), let milliseconds = Double(value), milliseconds > 0 {
                     refineTimeout = milliseconds / 1000
@@ -270,6 +282,7 @@ struct Config {
             refineModel: refineModel,
             refineTimeout: refineTimeout,
             refineCodexTransport: refineCodexTransport,
+            refineMiniMaxTransport: refineMiniMaxTransport,
             refineText: refineText
         )
     }

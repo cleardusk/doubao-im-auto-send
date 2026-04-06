@@ -94,7 +94,14 @@ final class AutoSendEngine {
         logger.log("默认 denylist：常见编辑器类应用")
         logger.log("文件日志：\(config.fileLogURL?.path ?? "关闭")")
         if config.refineEnabled {
-            logger.log("refine：开启，provider=\(config.refineProvider.rawValue)，mode=\(config.refineMode.rawValue)，model=\(config.refineModel)，timeout=\(Int(config.refineTimeout * 1000))ms")
+            let transportSummary: String
+            switch config.refineProvider {
+            case .codex:
+                transportSummary = config.refineCodexTransport.rawValue
+            case .minimax:
+                transportSummary = config.refineMiniMaxTransport.rawValue
+            }
+            logger.log("refine：开启，provider=\(config.refineProvider.rawValue)，transport=\(transportSummary)，mode=\(config.refineMode.rawValue)，model=\(config.refineModel)，timeout=\(Int(config.refineTimeout * 1000))ms")
         } else {
             logger.log("refine：关闭")
         }

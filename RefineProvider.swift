@@ -115,7 +115,7 @@ extension RefineProvider {
 func makeRefineProvider(config: Config, logger: Logger) throws -> RefineProvider {
     switch config.refineProvider {
     case .minimax:
-        return try MiniMaxClient(logger: logger)
+        return try MiniMaxClient(logger: logger, transportMode: config.refineMiniMaxTransport)
     case .codex:
         return try CodexHTTPProvider(logger: logger, transportMode: config.refineCodexTransport)
     }

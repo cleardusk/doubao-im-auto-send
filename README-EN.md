@@ -10,7 +10,7 @@
 bash install.sh
 ```
 
-By default, it installs to `~/.local/bin/doubao-im-auto-send`. If that directory is not in your `PATH`, run it with the full path or add the directory to `PATH`. Command name: **`doubao-im-auto-send`**.
+By default, it installs to `~/.local/bin/doubao-im-auto-send`. If that directory is not in your `PATH`, run it with the full path or add the directory to `PATH`. Executable command: **`doubao-im-auto-send`**.
 
 ## Quick Start
 

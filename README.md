@@ -61,7 +61,7 @@ doubao-im-auto-send --refine-text "这个事情大概就是这样这样"
 - 等待发送阶段按 `Esc` 可取消自动发送
 - `--refine` 默认关闭；启用后会在自动发送前调用 MiniMax CN API
 - 默认 refine 模式：`trim`
-- 默认 refine 模型：`MiniMax-M2.5-highspeed`
+- 默认 refine 模型：`MiniMax-M2.7`
 - 默认 refine 超时：`6000ms`
 
 ## MiniMax 配置

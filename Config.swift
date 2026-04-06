@@ -56,7 +56,7 @@ enum WatchedModifier {
 struct Config {
     static let defaultLogFilePath = "~/Library/Logs/doubao-im-auto-send/runtime.log"
     static let defaultMiniMaxHost = "https://api.minimaxi.com"
-    static let defaultMiniMaxModel = "MiniMax-M2.5-highspeed"
+    static let defaultMiniMaxModel = "MiniMax-M2.7"
     static let defaultDeniedAppBundleIDPrefixes = [
         "com.microsoft.VSCode",
         "com.vscodium",

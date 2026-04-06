@@ -61,7 +61,7 @@ Terminal log example (colors are enabled only in a TTY terminal):
 - Press `Esc` during the waiting-to-send phase to cancel auto-send
 - `--refine` is disabled by default; when enabled, MiniMax CN runs before auto-send
 - Default refine mode: `trim`
-- Default refine model: `MiniMax-M2.5-highspeed`
+- Default refine model: `MiniMax-M2.7`
 - Default refine timeout: `6000ms`
 
 ## MiniMax Configuration

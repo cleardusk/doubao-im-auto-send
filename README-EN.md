@@ -57,7 +57,7 @@ Terminal log example (colors are enabled only in a TTY terminal):
 ## FAQ
 
 - No response: check permissions, confirm Doubao IME is active, and make sure hold duration is not below `250ms`
-- No auto-send: may be interrupted by `Esc`, new keyboard/mouse input, input method switch, or frontmost app switch
+- No auto-send: may be interrupted by `Esc`, mouse input, input method switch, or frontmost app switch
 - Unstable behavior in some input fields: the script relies on Accessibility APIs to read text, and some fields may not be consistently readable
 - Terminal-only logs: use `--no-file-log`; silent terminal output: use `--quiet`
 

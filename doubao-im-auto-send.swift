@@ -287,9 +287,7 @@ final class DoubaoAutoSendHelper {
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
         if keyCode == config.escapeKeyCode {
             cancelPendingActions(reason: "按下 Esc，取消自动发送")
-            return
         }
-        cancelPendingActions(reason: "发送前发生了新的键盘输入")
     }
 
     private func handleFlagsChanged(_ event: CGEvent) {
@@ -597,7 +595,7 @@ func printUsage() {
         "  2. 仅在当前输入法为豆包输入法时生效。",
         "  3. 默认跳过常见编辑器类应用，如 VS Code、Cursor、Windsurf、JetBrains、Xcode、Sublime。",
         "  4. 松手后先满足释放侧下界，再等待文本稳定。",
-        "  5. 如果前台应用、输入法或用户输入发生变化，或按下 Esc，则取消自动发送。",
+        "  5. 如果前台应用、输入法、鼠标输入发生变化，或按下 Esc，则取消自动发送。",
         "  6. `--max-wait-ms` 为可选兜底参数；默认关闭。",
         "  7. 默认同时写入终端和文件日志：\(Config.defaultLogFilePath)",
         "  8. `--quiet` 仅静默终端；`--no-file-log` 关闭文件日志。",

@@ -18,7 +18,7 @@ By default, it installs to `~/.local/bin/doubao-im-auto-send`. If that directory
 # Run with default parameters
 doubao-im-auto-send
 
-# Check current environment and parameters
+# Check current environment
 doubao-im-auto-send --check
 doubao-im-auto-send --help
 ```
@@ -38,6 +38,7 @@ Terminal log example (colors are enabled only in a TTY terminal):
 - `poll-ms=50`
 - `min-hold-ms=250`
 - `max-wait` disabled by default
+- Common editor apps are skipped by default, including VS Code, Cursor, Windsurf, JetBrains IDEs, Xcode, and Sublime
 - Default file log: `~/Library/Logs/doubao-im-auto-send/runtime.log`
 - Press `Esc` during the waiting-to-send phase to cancel auto-send
 

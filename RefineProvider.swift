@@ -117,7 +117,7 @@ func makeRefineProvider(config: Config, logger: Logger) throws -> RefineProvider
     case .minimax:
         return try MiniMaxClient(logger: logger)
     case .codex:
-        return try CodexHTTPProvider(logger: logger)
+        return try CodexHTTPProvider(logger: logger, transportMode: config.refineCodexTransport)
     }
 }
 

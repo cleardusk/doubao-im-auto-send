@@ -26,7 +26,7 @@ enum CodexHTTPProviderError: LocalizedError {
     }
 }
 
-private struct CodexRequestBody: Encodable {
+struct CodexRequestBody: Encodable {
     struct InputMessage: Encodable {
         struct InputText: Encodable {
             let type = "input_text"
@@ -69,120 +69,9 @@ private struct CodexRequestBody: Encodable {
     }
 }
 
-private struct CodexSessionKey: Hashable {
+struct CodexSessionKey: Hashable {
     let model: String
     let mode: RefineMode
-}
-
-private enum CodexTransportPlan {
-    case websocket(sessionID: String, socket: URLSessionWebSocketTask?)
-    case sse(sessionID: String)
-}
-
-private struct CodexWebSocketPhaseError: Error {
-    let underlying: Error
-    let started: Bool
-}
-
-extension CodexWebSocketPhaseError: LocalizedError {
-    var errorDescription: String? {
-        underlying.localizedDescription
-    }
-}
-
-private actor CodexWebSocketPool {
-    private struct Entry {
-        let sessionID: String
-        var socket: URLSessionWebSocketTask?
-        var isBusy = false
-        var idleExpiry: Date?
-        var degradedUntil: Date?
-    }
-
-    private static let idleTTL: TimeInterval = 300
-    private static let degradeTTL: TimeInterval = 60
-    private var entries: [CodexSessionKey: Entry] = [:]
-
-    func plan(for key: CodexSessionKey) -> CodexTransportPlan {
-        let now = Date()
-        var entry = entries[key] ?? Entry(sessionID: makeSessionID(for: key))
-
-        if let idleExpiry = entry.idleExpiry, idleExpiry <= now {
-            entry.socket?.cancel(with: .normalClosure, reason: nil)
-            entry.socket = nil
-            entry.idleExpiry = nil
-            entry.isBusy = false
-        }
-
-        if let degradedUntil = entry.degradedUntil, degradedUntil > now {
-            entries[key] = entry
-            return .sse(sessionID: entry.sessionID)
-        }
-
-        if let socket = entry.socket, !entry.isBusy, socket.closeCode == .invalid {
-            entry.isBusy = true
-            entry.idleExpiry = nil
-            entries[key] = entry
-            return .websocket(sessionID: entry.sessionID, socket: socket)
-        }
-
-        if entry.isBusy {
-            entries[key] = entry
-            return .sse(sessionID: entry.sessionID)
-        }
-
-        entry.isBusy = true
-        entry.idleExpiry = nil
-        entries[key] = entry
-        return .websocket(sessionID: entry.sessionID, socket: nil)
-    }
-
-    func attach(_ socket: URLSessionWebSocketTask, for key: CodexSessionKey) {
-        var entry = entries[key] ?? Entry(sessionID: makeSessionID(for: key))
-        entry.socket = socket
-        entry.isBusy = true
-        entry.idleExpiry = nil
-        entries[key] = entry
-    }
-
-    func release(for key: CodexSessionKey, keep: Bool) {
-        guard var entry = entries[key] else { return }
-        if keep, let socket = entry.socket, socket.closeCode == .invalid {
-            entry.isBusy = false
-            entry.idleExpiry = Date().addingTimeInterval(Self.idleTTL)
-            entries[key] = entry
-            return
-        }
-
-        entry.socket?.cancel(with: .normalClosure, reason: nil)
-        entry.socket = nil
-        entry.isBusy = false
-        entry.idleExpiry = nil
-        entries[key] = entry
-    }
-
-    func markFailure(for key: CodexSessionKey) {
-        var entry = entries[key] ?? Entry(sessionID: makeSessionID(for: key))
-        entry.socket?.cancel(with: .goingAway, reason: nil)
-        entry.socket = nil
-        entry.isBusy = false
-        entry.idleExpiry = nil
-        entry.degradedUntil = Date().addingTimeInterval(Self.degradeTTL)
-        entries[key] = entry
-    }
-
-    private func makeSessionID(for key: CodexSessionKey) -> String {
-        let mode = sanitize(key.mode.rawValue).prefix(10)
-        let model = sanitize(key.model).prefix(24)
-        let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(12)
-        return "dbref-\(mode)-\(model)-\(nonce)"
-    }
-
-    private func sanitize(_ value: String) -> String {
-        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
-        let scalars = value.unicodeScalars.map { allowed.contains($0) ? Character($0) : "-" }
-        return String(scalars).trimmingCharacters(in: CharacterSet(charactersIn: "-")).prefix(48).description
-    }
 }
 
 final class CodexHTTPProvider: RefineProvider {
@@ -192,21 +81,25 @@ final class CodexHTTPProvider: RefineProvider {
     private let environment: [String: String]
     private let authStore: CodexOAuthStore
     private let httpSession: URLSession
-    private let websocketSession: URLSession
-    private let websocketPool = CodexWebSocketPool()
+    private let transportMode: CodexTransportMode
+    private let websocketTransport: CodexWebSocketTransport
     private let endpointURL = URL(string: "https://chatgpt.com/backend-api/codex/responses")!
-    private let websocketBetaHeader = "responses_websockets=2026-02-06"
 
-    init(logger: Logger, environment: [String: String] = ProcessInfo.processInfo.environment) throws {
+    init(
+        logger: Logger,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        transportMode: CodexTransportMode = .sse
+    ) throws {
         self.logger = logger
         self.environment = environment
+        self.transportMode = transportMode
         let status = CodexOAuthStore.environmentStatus(from: environment)
         guard status.authConfigured else {
             throw CodexHTTPProviderError.missingAuth
         }
         self.authStore = CodexOAuthStore(logger: logger, environment: environment)
         self.httpSession = HTTPTransportSupport.makeEphemeralSession(environment: environment)
-        self.websocketSession = HTTPTransportSupport.makeEphemeralSession(environment: environment)
+        self.websocketTransport = CodexWebSocketTransport(logger: logger, environment: environment)
     }
 
     static func environmentStatus(from environment: [String: String] = ProcessInfo.processInfo.environment) -> CodexEnvironmentStatus {
@@ -243,7 +136,7 @@ final class CodexHTTPProvider: RefineProvider {
     }
 }
 
-private extension CodexHTTPProvider {
+extension CodexHTTPProvider {
     func refineAsync(
         text: String,
         mode: RefineMode,
@@ -251,38 +144,30 @@ private extension CodexHTTPProvider {
         timeout: TimeInterval
     ) async throws -> String {
         let credential = try await authStore.resolvedCredential()
-        let key = CodexSessionKey(model: model, mode: mode)
         let startedAt = Date()
-        let sessionID: String
-        switch await websocketPool.plan(for: key) {
-        case .sse(let existingSessionID):
-            sessionID = existingSessionID
-        case .websocket(let existingSessionID, _):
-            sessionID = existingSessionID
-            await websocketPool.release(for: key, keep: false)
+        switch transportMode {
+        case .sse:
+            let sessionID = Self.makeSessionID(model: model, mode: mode)
+            let body = try Self.makeBody(text: text, mode: mode, model: model, sessionID: sessionID)
+            let result = try await performSSE(
+                body: body,
+                credential: credential,
+                sessionID: sessionID,
+                timeout: timeout
+            )
+            logSuccess(result: result, mode: mode, transport: "sse", source: credential.source, startedAt: startedAt)
+            return result
+        case .ws:
+            let result = try await websocketTransport.refine(
+                text: text,
+                mode: mode,
+                model: model,
+                timeout: timeout,
+                credential: credential
+            )
+            logSuccess(result: result, mode: mode, transport: "ws", source: credential.source, startedAt: startedAt)
+            return result
         }
-
-        let body = try makeBody(text: text, mode: mode, model: model, sessionID: sessionID)
-        let result = try await performSSE(
-            body: body,
-            credential: credential,
-            sessionID: sessionID,
-            timeout: timeout
-        )
-        logSuccess(result: result, mode: mode, transport: "sse", source: credential.source, startedAt: startedAt)
-        return result
-    }
-
-    func makeBody(text: String, mode: RefineMode, model: String, sessionID: String) throws -> Data {
-        let payload = CodexRequestBody(
-            model: model,
-            instructions: mode.systemPrompt,
-            input: [
-                .init(content: [.init(text: mode.userPrompt(for: text))])
-            ],
-            promptCacheKey: sessionID
-        )
-        return try JSONEncoder().encode(payload)
     }
 
     func performSSE(
@@ -314,60 +199,43 @@ private extension CodexHTTPProvider {
 
         let parser = CodexEventAccumulator()
         try parser.consumeSSE(data)
-        return try finalize(parser: parser)
+        return try Self.finalize(parser: parser)
     }
 
-    func performWebSocket(
-        socket: URLSessionWebSocketTask,
-        body: Data,
-        key: CodexSessionKey
-    ) async throws -> String {
-        let parser = CodexEventAccumulator()
-        let bodyString = String(decoding: body, as: UTF8.self)
-        let payload = "{\"type\":\"response.create\",\(bodyString.dropFirst())"
-        var hasStarted = false
-
-        return try await withTaskCancellationHandler {
-            do {
-                try await socket.send(.string(payload))
-                hasStarted = true
-            } catch {
-                throw CodexWebSocketPhaseError(underlying: error, started: false)
-            }
-            while true {
-                let message: URLSessionWebSocketTask.Message
-                do {
-                    message = try await socket.receive()
-                } catch {
-                    throw CodexWebSocketPhaseError(underlying: error, started: hasStarted)
-                }
-                switch message {
-                case .data(let data):
-                    try parser.consumeRawEvent(data)
-                case .string(let text):
-                    try parser.consumeRawEvent(Data(text.utf8))
-                @unknown default:
-                    throw CodexHTTPProviderError.invalidResponse
-                }
-
-                if parser.isCompleted {
-                    return try finalize(parser: parser)
-                }
-            }
-        } onCancel: {
-            socket.cancel(with: .goingAway, reason: nil)
-            Task {
-                await self.websocketPool.markFailure(for: key)
-            }
-        }
+    static func makeBody(text: String, mode: RefineMode, model: String, sessionID: String) throws -> Data {
+        let payload = CodexRequestBody(
+            model: model,
+            instructions: mode.systemPrompt,
+            input: [
+                .init(content: [.init(text: mode.userPrompt(for: text))])
+            ],
+            promptCacheKey: sessionID
+        )
+        return try JSONEncoder().encode(payload)
     }
 
-    func finalize(parser: CodexEventAccumulator) throws -> String {
+    static func makeSessionID(model: String, mode: RefineMode) -> String {
+        let modePart = sanitizeSessionComponent(mode.rawValue, maxLength: 10)
+        let modelPart = sanitizeSessionComponent(model, maxLength: 24)
+        let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(12)
+        return "dbref-\(modePart)-\(modelPart)-\(nonce)"
+    }
+
+    static func finalize(parser: CodexEventAccumulator) throws -> String {
         let result = RefineSanitizer.sanitizeCodex(parser.finalText)
         guard !result.isEmpty else {
             throw CodexHTTPProviderError.invalidContent
         }
         return result
+    }
+
+    static func sanitizeSessionComponent(_ value: String, maxLength: Int) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        let scalars = value.unicodeScalars.map { allowed.contains($0) ? Character($0) : "-" }
+        return String(scalars)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+            .prefix(maxLength)
+            .description
     }
 
     func buildBaseHeaders(credential: CodexCredential) -> [String: String] {
@@ -377,24 +245,6 @@ private extension CodexHTTPProvider {
             "originator": "pi",
             "User-Agent": "pi (\(ProcessInfo.processInfo.operatingSystemVersionString.trimmingCharacters(in: .whitespacesAndNewlines)); swift)"
         ]
-    }
-
-    func makeWebSocketTask(credential: CodexCredential, sessionID: String, timeout: TimeInterval) -> URLSessionWebSocketTask {
-        var request = URLRequest(url: websocketURL())
-        request.timeoutInterval = timeout
-        for (name, value) in buildBaseHeaders(credential: credential) {
-            request.setValue(value, forHTTPHeaderField: name)
-        }
-        request.setValue(websocketBetaHeader, forHTTPHeaderField: "OpenAI-Beta")
-        request.setValue(sessionID, forHTTPHeaderField: "x-client-request-id")
-        request.setValue(sessionID, forHTTPHeaderField: "session_id")
-        return websocketSession.webSocketTask(with: request)
-    }
-
-    func websocketURL() -> URL {
-        var components = URLComponents(url: endpointURL, resolvingAgainstBaseURL: false)!
-        components.scheme = endpointURL.scheme == "https" ? "wss" : "ws"
-        return components.url!
     }
 
     func fetchData(with request: URLRequest) async throws -> (Data, URLResponse) {
@@ -437,23 +287,6 @@ private extension CodexHTTPProvider {
         return String(data: data.prefix(240), encoding: .utf8) ?? "未知错误"
     }
 
-    func shouldFallbackToSSE(_ error: Error) -> Bool {
-        if let phaseError = error as? CodexWebSocketPhaseError {
-            guard !phaseError.started else { return false }
-            return shouldFallbackToSSE(phaseError.underlying)
-        }
-        if let urlError = error as? URLError {
-            switch urlError.code {
-            case .cannotConnectToHost, .networkConnectionLost, .cannotFindHost, .notConnectedToInternet, .timedOut:
-                return true
-            default:
-                break
-            }
-        }
-        let message = error.localizedDescription.lowercased()
-        return message.contains("handshake") || message.contains("cancelled") || message.contains("socket is not connected")
-    }
-
     func withTimeout<T>(
         _ timeout: TimeInterval,
         operation: @escaping @Sendable () async throws -> T
@@ -484,7 +317,7 @@ private extension CodexHTTPProvider {
     }
 }
 
-private final class CodexEventAccumulator {
+final class CodexEventAccumulator {
     private var deltaText = ""
     private var completedMessages: [String] = []
     private(set) var isCompleted = false

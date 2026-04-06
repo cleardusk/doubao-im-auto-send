@@ -4,9 +4,9 @@ import Foundation
 func printUsage() {
     let usageLines = [
         terminalSectionTitle("用法："),
-        "  \(terminalCommand("doubao-im-auto-send [--right-ctrl|--left-ctrl|--right-option|--left-option] [--delay-ms 600] [--per-second-postdelay-ms 130] [--stable-ms 450] [--poll-ms 50] [--max-wait-ms 5000] [--min-hold-ms 250] [--log-file PATH] [--no-file-log] [--refine] [--refine-provider minimax|codex] [--refine-mode trim|correct] [--refine-model MODEL] [--refine-timeout-ms MS] [--quiet]"))",
+        "  \(terminalCommand("doubao-im-auto-send [--right-ctrl|--left-ctrl|--right-option|--left-option] [--delay-ms 600] [--per-second-postdelay-ms 130] [--stable-ms 450] [--poll-ms 50] [--max-wait-ms 5000] [--min-hold-ms 250] [--log-file PATH] [--no-file-log] [--refine] [--refine-provider minimax|codex] [--refine-mode trim|correct] [--refine-model MODEL] [--refine-codex-transport sse|ws] [--refine-timeout-ms MS] [--quiet]"))",
         "  \(terminalCommand("doubao-im-auto-send --check"))",
-        "  \(terminalCommand("doubao-im-auto-send --refine-text \"这个事情大概就是这样这样\" [--refine-provider minimax|codex] [--refine-mode trim|correct] [--refine-model MODEL] [--refine-timeout-ms MS]"))",
+        "  \(terminalCommand("doubao-im-auto-send --refine-text \"这个事情大概就是这样这样\" [--refine-provider minimax|codex] [--refine-mode trim|correct] [--refine-model MODEL] [--refine-codex-transport sse|ws] [--refine-timeout-ms MS]"))",
         "",
         terminalSectionTitle("行为："),
         "  1. 监听指定修饰键的长按与松开。",
@@ -18,7 +18,8 @@ func printUsage() {
         "  7. `--max-wait-ms` 为可选兜底参数；默认关闭。",
         "  8. 默认同时写入终端和文件日志：\(Config.defaultLogFilePath)",
         "  9. `--quiet` 仅静默终端；`--no-file-log` 关闭文件日志。",
-        " 10. `minimax` 需要 `MINIMAX_API_KEY`；`codex` 需要本机已有 `openclaw models auth login --provider openai-codex` 或 `codex login` 登录态，并且只读取本地 token，不自动 refresh。"
+        " 10. `minimax` 需要 `MINIMAX_API_KEY`；`codex` 需要本机已有 `openclaw models auth login --provider openai-codex` 或 `codex login` 登录态，并且只读取本地 token，不自动 refresh。",
+        " 11. `codex` 支持 `sse` 或 `ws` 两种模式；默认是 `sse`。"
     ]
     print(usageLines.joined(separator: "\n"))
 }
@@ -52,6 +53,7 @@ func printCheck(config: Config, accessibility: AccessibilityService) {
         "\(terminalLabel("refine 模式:")) \(config.refineMode.rawValue)",
         "\(terminalLabel("refine 模型:")) \(config.refineModel)",
         "\(terminalLabel("refine 超时:")) \(Int(config.refineTimeout * 1000))ms",
+        "\(terminalLabel("Codex transport:")) \(config.refineCodexTransport.rawValue)",
         "\(terminalLabel("MINIMAX_API_HOST:")) \(hostStatus)",
         "\(terminalLabel("MINIMAX_API_KEY:")) \(keyStatus)",
         "\(terminalLabel("Codex 登录态:")) \(codexAuthStatus)",

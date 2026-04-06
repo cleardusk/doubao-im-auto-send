@@ -1,6 +1,6 @@
 # doubao-im-auto-send
 
-**一个 macOS Swift 命令行工具：监听豆包输入法语音输入结束，在文本稳定后自动发送 `Enter`；可选在发送前接入 MiniMax CN refine。**
+**一个 macOS Swift 命令行工具：监听豆包输入法语音输入结束，在文本稳定后自动发送 `Enter`；可选在发送前接入 MiniMax CN 或 Codex refine。**
 
 > 适用前提：macOS、豆包输入法，以及你的终端应用已开启“输入监控”和“辅助功能”权限。
 
@@ -34,8 +34,17 @@ doubao-im-auto-send
 doubao-im-auto-send --check
 doubao-im-auto-send --help
 
-# 启用 MiniMax refine
+# 启用 refine
 doubao-im-auto-send --refine
+
+# 显式使用 MiniMax
+doubao-im-auto-send --refine --refine-provider minimax
+
+# 显式使用 Codex SSE
+doubao-im-auto-send --refine --refine-provider codex --refine-codex-transport sse
+
+# 显式使用 Codex WebSocket
+doubao-im-auto-send --refine --refine-provider codex --refine-codex-transport ws
 
 # 单独测试 refine，不启动监听
 doubao-im-auto-send --refine-text "这个事情大概就是这样这样"
@@ -59,22 +68,33 @@ doubao-im-auto-send --refine-text "这个事情大概就是这样这样"
 - 默认跳过常见编辑器类应用，如 VS Code、Cursor、Windsurf、JetBrains、Xcode、Sublime
 - 默认文件日志：`~/Library/Logs/doubao-im-auto-send/runtime.log`
 - 等待发送阶段按 `Esc` 可取消自动发送
-- `--refine` 默认关闭；启用后会在自动发送前调用 MiniMax CN API
+- `--refine` 默认关闭；启用后会在自动发送前调用配置的 refine provider
+- 默认 refine provider：`codex`
 - 默认 refine 模式：`trim`
-- 默认 refine 模型：`MiniMax-M2.7`
-- 默认 refine 超时：`6000ms`
+- 默认 refine 模型：`gpt-5.4-mini`
+- 默认 refine 超时：`10000ms`
+- 默认 Codex transport：`sse`
 
-## MiniMax 配置
+## Refine Provider 配置
 
-- `MINIMAX_API_KEY`：必填；启用 `--refine` 或使用 `--refine-text` 时需要
+- `minimax`
+- `MINIMAX_API_KEY`：必填；启用 `--refine --refine-provider minimax` 或使用 `--refine-text --refine-provider minimax` 时需要
 - `MINIMAX_API_HOST`：可选；默认 `https://api.minimaxi.com`
 - 当前实现走 OpenAI 兼容接口：`/v1/chat/completions`
+
+- `codex`
+- 需要本机已有 `openclaw models auth login --provider openai-codex` 或 `codex login` 登录态
+- 只读取本地 token，不自动 refresh
+- 支持 `--refine-codex-transport sse|ws`
+- `sse` 是默认模式，单次请求更稳
+- `ws` 支持同进程连接复用，更适合长时间运行场景
 
 ## 常见问题
 
 - 没反应：先检查权限、当前输入法是否为豆包、按住时长是否低于 `250ms`
 - 没自动发送：可能被 `Esc`、新的键盘/鼠标输入、输入法切换或前台应用切换打断
-- refine 没生效：先用 `doubao-im-auto-send --check` 确认 `MINIMAX_API_KEY` / `MINIMAX_API_HOST` 状态
+- refine 没生效：先用 `doubao-im-auto-send --check` 确认当前 provider、token 或 `MINIMAX_API_KEY` / `MINIMAX_API_HOST` 状态
+- Codex 太慢：先试 `--refine-codex-transport ws`；如果只跑单次命令，`sse` 往往更稳
 - 某些输入框效果不稳定：脚本依赖辅助功能读取文本，部分输入框可能不可稳定读取
 - 只想看终端日志：加 `--no-file-log`；只想静默终端：加 `--quiet`
 
@@ -85,6 +105,11 @@ doubao-im-auto-send --refine-text "这个事情大概就是这样这样"
 - [AutoSendEngine.swift](./AutoSendEngine.swift)：主状态机与发送 pipeline
 - [Accessibility.swift](./Accessibility.swift)：焦点输入框读取与回写
 - [MiniMaxClient.swift](./MiniMaxClient.swift)：MiniMax CN API 客户端
+- [RefineProvider.swift](./RefineProvider.swift)：refine provider 抽象与分流
+- [CodexHTTPProvider.swift](./CodexHTTPProvider.swift)：Codex SSE provider
+- [CodexWebSocketTransport.swift](./CodexWebSocketTransport.swift)：Codex WebSocket transport
+- [CodexOAuthStore.swift](./CodexOAuthStore.swift)：本地 Codex/OpenClaw token 读取
+- [HTTPTransportSupport.swift](./HTTPTransportSupport.swift)：URLSession 与代理支持
 - [Logging.swift](./Logging.swift)：终端与文件日志
 - [install.sh](./install.sh)：一键安装脚本
 - [doubao-im-auto-send-model.md](./doubao-im-auto-send-model.md)：详细建模与参数说明

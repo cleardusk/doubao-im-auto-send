@@ -1,6 +1,6 @@
 # doubao-im-auto-send
 
-**A macOS Swift CLI that listens for Doubao IME voice input completion and automatically sends `Enter` after text becomes stable, with an optional MiniMax CN refine step before sending.**
+**A macOS Swift CLI that listens for Doubao IME voice input completion and automatically sends `Enter` after text becomes stable, with an optional MiniMax CN or Codex refine step before sending.**
 
 > Requirements: macOS, Doubao IME, and your terminal app must have both “Input Monitoring” and “Accessibility” permissions enabled.
 
@@ -34,8 +34,17 @@ doubao-im-auto-send
 doubao-im-auto-send --check
 doubao-im-auto-send --help
 
-# Enable MiniMax refine
+# Enable refine
 doubao-im-auto-send --refine
+
+# Explicitly use MiniMax
+doubao-im-auto-send --refine --refine-provider minimax
+
+# Explicitly use Codex SSE
+doubao-im-auto-send --refine --refine-provider codex --refine-codex-transport sse
+
+# Explicitly use Codex WebSocket
+doubao-im-auto-send --refine --refine-provider codex --refine-codex-transport ws
 
 # Test refine only, without event monitoring
 doubao-im-auto-send --refine-text "This is basically basically what I mean"
@@ -59,22 +68,33 @@ Terminal log example (colors are enabled only in a TTY terminal):
 - Common editor apps are skipped by default, including VS Code, Cursor, Windsurf, JetBrains IDEs, Xcode, and Sublime
 - Default file log: `~/Library/Logs/doubao-im-auto-send/runtime.log`
 - Press `Esc` during the waiting-to-send phase to cancel auto-send
-- `--refine` is disabled by default; when enabled, MiniMax CN runs before auto-send
+- `--refine` is disabled by default; when enabled, the configured refine provider runs before auto-send
+- Default refine provider: `codex`
 - Default refine mode: `trim`
-- Default refine model: `MiniMax-M2.7`
-- Default refine timeout: `6000ms`
+- Default refine model: `gpt-5.4-mini`
+- Default refine timeout: `10000ms`
+- Default Codex transport: `sse`
 
-## MiniMax Configuration
+## Refine Provider Configuration
 
-- `MINIMAX_API_KEY`: required when using `--refine` or `--refine-text`
+- `minimax`
+- `MINIMAX_API_KEY`: required when using `--refine --refine-provider minimax` or `--refine-text --refine-provider minimax`
 - `MINIMAX_API_HOST`: optional, defaults to `https://api.minimaxi.com`
-- The current implementation uses the OpenAI-compatible endpoint: `/v1/chat/completions`
+- Uses the OpenAI-compatible endpoint: `/v1/chat/completions`
+
+- `codex`
+- Requires an existing local login from `openclaw models auth login --provider openai-codex` or `codex login`
+- Reads local tokens only; does not auto-refresh
+- Supports `--refine-codex-transport sse|ws`
+- `sse` is the default and is usually steadier for one-off requests
+- `ws` supports connection reuse within a long-running process
 
 ## FAQ
 
 - No response: check permissions, confirm Doubao IME is active, and make sure hold duration is not below `250ms`
 - No auto-send: may be interrupted by `Esc`, new keyboard/mouse input, input method switch, or frontmost app switch
-- Refine not working: run `doubao-im-auto-send --check` and confirm `MINIMAX_API_KEY` / `MINIMAX_API_HOST`
+- Refine not working: run `doubao-im-auto-send --check` and confirm the selected provider, token state, or `MINIMAX_API_KEY` / `MINIMAX_API_HOST`
+- Codex feels slow: try `--refine-codex-transport ws`; for one-shot CLI calls, `sse` is often steadier
 - Unstable behavior in some input fields: the script relies on Accessibility APIs to read text, and some fields may not be consistently readable
 - Terminal-only logs: use `--no-file-log`; silent terminal output: use `--quiet`
 
@@ -85,6 +105,11 @@ Terminal log example (colors are enabled only in a TTY terminal):
 - [AutoSendEngine.swift](./AutoSendEngine.swift): main state machine and send pipeline
 - [Accessibility.swift](./Accessibility.swift): focused element read/write helpers
 - [MiniMaxClient.swift](./MiniMaxClient.swift): MiniMax CN API client
+- [RefineProvider.swift](./RefineProvider.swift): refine provider abstraction and dispatch
+- [CodexHTTPProvider.swift](./CodexHTTPProvider.swift): Codex SSE provider
+- [CodexWebSocketTransport.swift](./CodexWebSocketTransport.swift): Codex WebSocket transport
+- [CodexOAuthStore.swift](./CodexOAuthStore.swift): local Codex/OpenClaw token loading
+- [HTTPTransportSupport.swift](./HTTPTransportSupport.swift): URLSession and proxy support
 - [Logging.swift](./Logging.swift): terminal and file logging
 - [install.sh](./install.sh): one-command installer
 - [doubao-im-auto-send-model.md](./doubao-im-auto-send-model.md): detailed model and parameter explanation

@@ -39,9 +39,9 @@ swift build -c release
 - 版本号输出为合法的 `YYYY-MM-DD`
 - 当前输入法是豆包输入法
 - 如果要验证 `refine`，当前前台应用应为 `iTerm2` 或 `Terminal`
-- `MINIMAX_API_KEY` 已设置
-- `Codex 登录态` 不是 `未检测到`
-- `Codex 登录态` 不是 `已配置但已过期`
+- 如果测 `MiniMax`，`MINIMAX_API_KEY` 已设置
+- 如果测 `Codex`，`Codex 登录态` 不是 `未检测到`
+- 如果测 `Codex`，`Codex 登录态` 不是 `已配置但已过期`
 
 系统权限也要提前确认：
 

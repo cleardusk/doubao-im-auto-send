@@ -36,6 +36,7 @@ func printCheck(config: Config, accessibility: AccessibilityService) {
     } ?? "未知"
     let frontmost = accessibility.frontmostBundleID() ?? "未知"
     let denylistStatus = Config.defaultDeniedAppBundleIDPrefixes.contains { frontmost.hasPrefix($0) } ? "是" : "否"
+    let refineWhitelistStatus = Config.defaultRefineAllowedAppBundleIDs.contains(frontmost) ? "是" : "否"
     let miniMaxStatus = MiniMaxClient.environmentStatus()
     let codexStatus = CodexHTTPProvider.environmentStatus()
     let hostStatus = miniMaxStatus.hostValidationError == nil ? miniMaxStatus.apiHost : "\(miniMaxStatus.apiHost)（无效）"
@@ -58,6 +59,7 @@ func printCheck(config: Config, accessibility: AccessibilityService) {
         "\(terminalLabel("当前输入法名称:")) \(localizedName)",
         "\(terminalLabel("当前前台应用:")) \(frontmost)",
         "\(terminalLabel("命中默认 denylist:")) \(denylistStatus)",
+        "\(terminalLabel("命中 refine 白名单:")) \(refineWhitelistStatus)",
         "\(terminalLabel("refine 已启用:")) \(config.refineEnabled ? "是" : "否")",
         "\(terminalLabel("refine provider:")) \(config.refineProvider.rawValue)",
         "\(terminalLabel("refine 模式:")) \(config.refineMode.rawValue)",

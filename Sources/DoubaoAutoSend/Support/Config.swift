@@ -144,6 +144,10 @@ struct Config {
         "com.apple.dt.Xcode",
         "com.sublimetext.4"
     ]
+    static let defaultRefineAllowedAppBundleIDs = [
+        "com.googlecode.iterm2",
+        "com.apple.Terminal"
+    ]
 
     let doubaoInputSourceID = "com.bytedance.inputmethod.doubaoime.pinyin"
     let enterKeyCode: CGKeyCode = 36
@@ -158,6 +162,7 @@ struct Config {
     let terminalVerbose: Bool
     let fileLogURL: URL?
     let deniedAppBundleIDPrefixes: [String]
+    let refineAllowedAppBundleIDs: [String]
     let refineEnabled: Bool
     let refineProvider: RefineProviderKind
     let refineMode: RefineMode
@@ -330,6 +335,7 @@ struct Config {
             terminalVerbose: terminalVerbose,
             fileLogURL: fileLogURL,
             deniedAppBundleIDPrefixes: defaultDeniedAppBundleIDPrefixes,
+            refineAllowedAppBundleIDs: defaultRefineAllowedAppBundleIDs,
             refineEnabled: refineEnabled,
             refineProvider: refineProvider,
             refineMode: refineMode,

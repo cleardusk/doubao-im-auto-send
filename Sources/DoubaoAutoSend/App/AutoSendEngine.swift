@@ -121,6 +121,7 @@ final class AutoSendEngine {
                 transportSummary = config.refineMiniMaxTransport.rawValue
             }
             logger.log("refine：开启，provider=\(config.refineProvider.rawValue)，transport=\(transportSummary)，mode=\(config.refineMode.rawValue)，model=\(config.refineModel)，minChars=\(config.refineMinChars)，timeout=\(Int(config.refineTimeout * 1000))ms")
+            logger.log("refine 白名单：\(config.refineAllowedAppBundleIDs.joined(separator: ", "))")
         } else {
             logger.log("refine：关闭")
         }
@@ -361,6 +362,12 @@ final class AutoSendEngine {
         guard let focusSnapshot = stableSnapshot ?? state.focusSnapshotAtRelease else {
             logger.log("跳过：当前焦点输入框不可用，回退原文发送")
             beginSyntheticAction(.directSend(snapshot: nil, expectedTextBeforeSend: nil))
+            return
+        }
+
+        guard isRefineAllowedApp(focusSnapshot.bundleID) else {
+            logger.log("跳过：当前前台应用不在 refine 白名单中（\(focusSnapshot.bundleID ?? "未知")），直接发送")
+            beginSyntheticAction(.directSend(snapshot: focusSnapshot, expectedTextBeforeSend: sourceText))
             return
         }
 
@@ -630,6 +637,13 @@ final class AutoSendEngine {
 
     private func isDeniedApp(_ bundleID: String) -> Bool {
         config.deniedAppBundleIDPrefixes.contains { bundleID.hasPrefix($0) }
+    }
+
+    private func isRefineAllowedApp(_ bundleID: String?) -> Bool {
+        guard let bundleID else {
+            return false
+        }
+        return config.refineAllowedAppBundleIDs.contains(bundleID)
     }
 
     private func computedRequiredReleaseDelay(heldFor: TimeInterval) -> TimeInterval {

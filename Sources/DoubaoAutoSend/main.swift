@@ -34,7 +34,7 @@ func printUsage() {
         "  \(terminalCommand("doubao-im-auto-send --version"))",
         "  \(terminalCommand("doubao-im-auto-send [--right-ctrl|--left-ctrl|--right-option|--left-option] [--delay-ms 600] [--per-second-postdelay-ms 130] [--stable-ms 450] [--poll-ms 50] [--max-wait-ms 5000] [--min-hold-ms 250] [--log-file PATH] [--no-file-log] [--refine] [--refine-provider minimax|codex] [--refine-mode trim|correct|chunibyo|geniusGirl] [--refine-model MODEL] [--refine-min-chars 30] [--refine-max-chars 1000] [--refine-codex-transport sse|ws] [--refine-minimax-transport sync|sse|ws] [--refine-timeout-ms MS] [--quiet]"))",
         "  \(terminalCommand("doubao-im-auto-send --check"))",
-        "  \(terminalCommand("doubao-im-auto-send --refine-text \"这个事情大概就是这样这样\" [--refine-provider minimax|codex] [--refine-mode trim|correct|chunibyo|geniusGirl] [--refine-model MODEL] [--refine-min-chars 30] [--refine-max-chars 1000] [--refine-codex-transport sse|ws] [--refine-minimax-transport sync|sse|ws] [--refine-timeout-ms MS]"))",
+        "  \(terminalCommand("doubao-im-auto-send --refine-text \"这个事情大概就是这样，我想先整理一下再发出去\" [--refine-provider minimax|codex] [--refine-mode trim|correct|chunibyo|geniusGirl] [--refine-model MODEL] [--refine-min-chars 30] [--refine-max-chars 1000] [--refine-codex-transport sse|ws] [--refine-minimax-transport sync|sse|ws] [--refine-timeout-ms MS]"))",
         "  \(terminalCommand("doubao-im-auto-send --rewrite-text \"重写后的文本\""))",
         "",
         terminalSectionTitle("行为："),

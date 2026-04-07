@@ -31,6 +31,7 @@ func logRefineProviderStartup(config: Config, logger: Logger) {
 func printUsage() {
     let usageLines = [
         terminalSectionTitle("用法："),
+        "  \(terminalCommand("doubao-im-auto-send --version"))",
         "  \(terminalCommand("doubao-im-auto-send [--right-ctrl|--left-ctrl|--right-option|--left-option] [--delay-ms 600] [--per-second-postdelay-ms 130] [--stable-ms 450] [--poll-ms 50] [--max-wait-ms 5000] [--min-hold-ms 250] [--log-file PATH] [--no-file-log] [--refine] [--refine-provider minimax|codex] [--refine-mode trim|correct|chunibyo] [--refine-model MODEL] [--refine-min-chars 15] [--refine-max-chars 1000] [--refine-codex-transport sse|ws] [--refine-minimax-transport sync|sse|ws] [--refine-timeout-ms MS] [--quiet]"))",
         "  \(terminalCommand("doubao-im-auto-send --check"))",
         "  \(terminalCommand("doubao-im-auto-send --refine-text \"这个事情大概就是这样这样\" [--refine-provider minimax|codex] [--refine-mode trim|correct|chunibyo] [--refine-model MODEL] [--refine-min-chars 15] [--refine-max-chars 1000] [--refine-codex-transport sse|ws] [--refine-minimax-transport sync|sse|ws] [--refine-timeout-ms MS]"))",
@@ -82,6 +83,7 @@ func printCheck(config: Config, accessibility: AccessibilityService) {
 
     let checkLines = [
         terminalSectionTitle("当前环境："),
+        "\(terminalLabel("当前版本:")) \(AppVersion.current)",
         "\(terminalLabel("当前输入法 ID:")) \(inputSourceID)",
         "\(terminalLabel("当前输入法名称:")) \(localizedName)",
         "\(terminalLabel("当前前台应用:")) \(frontmost)",
@@ -181,6 +183,16 @@ func runRewriteText(_ config: Config, logger: Logger, accessibility: Accessibili
 if CommandLine.arguments.contains("--help") {
     printUsage()
     exit(0)
+}
+
+if CommandLine.arguments.contains("--version") {
+    print(AppVersion.current)
+    exit(0)
+}
+
+if let versionError = AppVersion.validationError() {
+    fputs("版本配置错误：\(versionError)\n", stderr)
+    exit(1)
 }
 
 let config: Config

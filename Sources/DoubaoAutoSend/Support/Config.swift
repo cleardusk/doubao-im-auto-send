@@ -319,7 +319,7 @@ struct Config {
                 refineText = try requireValue(for: argument)
             case "--rewrite-text":
                 rewriteText = try requireValue(for: argument)
-            case "--help", "--check":
+            case "--help", "--check", "--version":
                 break
             default:
                 throw ConfigError.unknownFlag(argument)

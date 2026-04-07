@@ -56,7 +56,7 @@ doubao-im-auto-send --refine --refine-provider codex --refine-codex-transport ws
 doubao-im-auto-send --refine --refine-mode geniusGirl
 
 # 单独测试 refine，不启动监听
-doubao-im-auto-send --refine-text "这个事情大概就是这样这样"
+doubao-im-auto-send --refine-text "我今天想说明一下这个事情的背景、当前判断，以及接下来准备怎么处理。"
 ```
 
 ## 运行示例
@@ -129,7 +129,7 @@ doubao-im-auto-send --refine-text "这个事情大概就是这样这样"
 
 - 没反应：先检查权限、当前输入法是否为豆包、按住时长是否低于 `250ms`
 - 没自动发送：可能被 `Esc`、新的键盘/鼠标输入、输入法切换或前台应用切换打断
-- refine 没生效：先用 `doubao-im-auto-send --check` 确认当前 provider、本地 token / `MINIMAX_API_KEY` 状态、当前前台应用是否命中 refine 白名单，以及文本长度是否落在 `30..1000` 范围内
+- refine 没生效：先用 `doubao-im-auto-send --check` 确认当前 provider、本地 token / `MINIMAX_API_KEY` 状态、当前前台应用是否命中 refine 白名单；文本长度门槛只会显示配置值，实际长度需要结合当前输入内容或运行日志判断
 - 刚启动就说话：先看日志里是否已经出现 `开始监听` 和 `refine provider 已就绪`
 - MiniMax 太慢：可试 `--refine-provider minimax --refine-minimax-transport sse`，但总完成时间不一定明显短于 `sync`
 - Codex 太慢：先试 `--refine-codex-transport ws`；如果只跑单次命令，`sse` 往往更稳

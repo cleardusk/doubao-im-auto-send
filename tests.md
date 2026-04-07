@@ -56,7 +56,7 @@ swift build -c release
 
 ```bash
 .build/release/doubao-im-auto-send \
-  --refine-text "我我我今天想说的是这个事情基本上就这样" \
+  --refine-text "我我我今天想说明一下这个事情的背景、当前判断，以及接下来准备怎么处理。" \
   --refine-provider codex \
   --refine-mode correct \
   --refine-codex-transport sse
@@ -86,7 +86,7 @@ swift build -c release
 
 ```bash
 .build/release/doubao-im-auto-send \
-  --refine-text "我我我今天想说的是这个事情基本上就这样" \
+  --refine-text "我我我今天想说明一下这个事情的背景、当前判断，以及接下来准备怎么处理。" \
   --refine-provider minimax \
   --refine-mode correct \
   --refine-minimax-transport sync
@@ -165,7 +165,7 @@ swift build -c release
 
 推荐测试句：
 
-- `我我我今天想说的是这个事情基本上就这样`
+- `我我我今天想说明一下这个事情的背景、当前判断，以及接下来准备怎么处理。`
 - `这个 PR 你先帮我 review 一下，然后那个 TODO 先不要动，最后直接 merge 到 main 就行`
 - `我们等会儿用 Codex 跑一下这个 script，然后把 output 发到微信群里，URL 还是用那个 staging link`
 
@@ -289,7 +289,7 @@ swift build -c release
 - 日志出现 `跳过：检测到图片占位，直接发送原文`
 - 不进入 refine
 
-## 6. 日志位置
+## 7. 日志位置
 
 默认日志文件：
 
@@ -307,7 +307,7 @@ swift build -c release
 - 是否发生 fallback
 - 是否命中取消条件
 
-## 7. 建议测试顺序
+## 8. 建议测试顺序
 
 建议按这个顺序做：
 
@@ -316,11 +316,11 @@ swift build -c release
 3. `--refine-text + codex + ws`
 4. `--refine-text + minimax + sync`
 5. `--refine-text + minimax + sse`
-6. 微信输入框下做 `Codex + SSE` 端到端
+6. `iTerm2` 或 `Terminal` 输入区下做 `Codex + SSE` 端到端
 7. 测取消路径
 8. 测 timeout/fallback 路径
 
-## 8. 当前已知说明
+## 9. 当前已知说明
 
 - `Codex` 只读取本地 token，不自动 refresh
 - `MiniMax-M2.7-highspeed` 当前 token plan 不支持

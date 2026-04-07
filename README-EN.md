@@ -129,7 +129,7 @@ Terminal log example (colors are enabled only in a TTY terminal):
 
 - No response: check permissions, confirm Doubao IME is active, and make sure hold duration is not below `250ms`
 - No auto-send: may be interrupted by `Esc`, new keyboard/mouse input, input method switch, or frontmost app switch
-- Refine not working: run `doubao-im-auto-send --check` and confirm provider state, local token / `MINIMAX_API_KEY`, refine whitelist status, and whether the text length is within `30..1000`
+- Refine not working: run `doubao-im-auto-send --check` and confirm provider state, local token / `MINIMAX_API_KEY`, and refine whitelist status; `--check` only shows the configured length thresholds, so actual input length still needs to be verified from the current text or runtime logs
 - Speaking immediately after launch: check whether the logs already show both `开始监听` and `refine provider 已就绪`
 - MiniMax feels slow: try `--refine-provider minimax --refine-minimax-transport sse`, but total completion time may still be close to `sync`
 - Codex feels slow: try `--refine-codex-transport ws`; for one-shot CLI calls, `sse` is often steadier

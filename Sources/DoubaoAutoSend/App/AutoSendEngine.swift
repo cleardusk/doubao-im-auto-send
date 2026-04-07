@@ -121,7 +121,7 @@ final class AutoSendEngine {
             case .minimax:
                 transportSummary = config.refineMiniMaxTransport.rawValue
             }
-            logger.log("refine：开启，provider=\(config.refineProvider.rawValue)，transport=\(transportSummary)，mode=\(config.refineMode.rawValue)，model=\(config.refineModel)，timeout=\(Int(config.refineTimeout * 1000))ms")
+            logger.log("refine：开启，provider=\(config.refineProvider.rawValue)，transport=\(transportSummary)，mode=\(config.refineMode.rawValue)，model=\(config.refineModel)，minChars=\(config.refineMinChars)，timeout=\(Int(config.refineTimeout * 1000))ms")
         } else {
             logger.log("refine：关闭")
         }
@@ -162,7 +162,9 @@ final class AutoSendEngine {
             cancelPendingActions(reason: "按下 Esc，取消自动发送")
             return
         }
-        cancelPendingActions(reason: "发送前发生了新的键盘输入")
+        cancelPendingActions(
+            reason: "发送前发生了新的键盘输入（keyCode=\(keyCode)，phase=\(String(describing: state.phase))）"
+        )
     }
 
     private func handleFlagsChanged(_ event: CGEvent) {
@@ -363,6 +365,12 @@ final class AutoSendEngine {
             return
         }
 
+        if sourceText.count < config.refineMinChars {
+            logger.log("跳过：文本长度 \(sourceText.count) 小于 refine 最小长度 \(config.refineMinChars)，直接发送")
+            beginSyntheticAction(.directSend(snapshot: focusSnapshot, expectedTextBeforeSend: sourceText))
+            return
+        }
+
         startRefine(sourceText: sourceText, focusSnapshot: focusSnapshot, provider: refineProvider)
     }
 
@@ -444,7 +452,7 @@ final class AutoSendEngine {
         case .success(let refinedText):
             logger.log("refine 输出预览：\(previewForLog(refinedText))")
             if refinedText == sourceText {
-                logger.log("跳过：refine 未改变文本，直接发送")
+                logger.log("refine 前后相同：长度=\(sourceText.count)，直接发送")
                 beginSyntheticAction(.directSend(snapshot: currentSnapshot, expectedTextBeforeSend: sourceText))
                 return
             }

@@ -161,6 +161,7 @@ struct Config {
     let refineProvider: RefineProviderKind
     let refineMode: RefineMode
     let refineModel: String
+    let refineMinChars: Int
     let refineTimeout: TimeInterval
     let refineCodexTransport: CodexTransportMode
     let refineMiniMaxTransport: MiniMaxTransportMode
@@ -182,6 +183,7 @@ struct Config {
         var refineProvider = RefineProviderKind.codex
         var refineMode = RefineMode.trim
         var refineModel = refineProvider.defaultModel
+        var refineMinChars = 15
         var refineModelExplicitlySet = false
         var refineTimeout = refineProvider.defaultTimeout
         var refineTimeoutExplicitlySet = false
@@ -210,6 +212,13 @@ struct Config {
                 throw ConfigError.invalidValue(flag: flag, value: value, expected: "大于 0 的毫秒数")
             }
             return milliseconds / 1000
+        }
+
+        func parseNonNegativeInt(_ value: String, for flag: String) throws -> Int {
+            guard let intValue = Int(value), intValue >= 0 else {
+                throw ConfigError.invalidValue(flag: flag, value: value, expected: "大于等于 0 的整数")
+            }
+            return intValue
         }
 
         while let argument = iterator.next() {
@@ -266,6 +275,8 @@ struct Config {
                 }
                 refineModel = value
                 refineModelExplicitlySet = true
+            case "--refine-min-chars":
+                refineMinChars = try parseNonNegativeInt(requireValue(for: argument), for: argument)
             case "--refine-codex-transport":
                 let value = try requireValue(for: argument)
                 guard let transport = CodexTransportMode(rawValue: value) else {
@@ -322,6 +333,7 @@ struct Config {
             refineProvider: refineProvider,
             refineMode: refineMode,
             refineModel: refineModel,
+            refineMinChars: refineMinChars,
             refineTimeout: refineTimeout,
             refineCodexTransport: refineCodexTransport,
             refineMiniMaxTransport: refineMiniMaxTransport,

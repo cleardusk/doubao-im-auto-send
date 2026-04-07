@@ -213,14 +213,31 @@ final class AccessibilityService {
             return false
         }
 
-        Thread.sleep(forTimeInterval: 0.03)
-        if pasteTerminalText(text, into: element) {
-            return true
+        let maxInsertionAttempts = 3
+        for attempt in 0..<maxInsertionAttempts {
+            Thread.sleep(forTimeInterval: 0.03)
+            if insertTerminalText(text, into: element) {
+                return true
+            }
+
+            guard attempt < maxInsertionAttempts - 1 else {
+                break
+            }
+
+            let currentInput = currentTerminalInputText(in: element)
+            guard !currentInput.isEmpty else {
+                continue
+            }
+
+            guard let refreshedContext = terminalEditContext(from: element) else {
+                return false
+            }
+            guard clearTerminalInput(in: element, initialContext: refreshedContext) else {
+                return false
+            }
         }
-        guard postUnicodeText(text) else {
-            return false
-        }
-        return waitForTerminalRewrite(text, in: element)
+
+        return false
     }
 
     private func waitForTerminalRewrite(_ expectedText: String, in element: AXUIElement) -> Bool {
@@ -832,6 +849,13 @@ final class AccessibilityService {
             return true
         }
 
+        if trimmed.range(
+            of: #"^[A-Z][A-Za-z0-9'\/+-]*(?: [A-Za-z0-9'\/+.-]+){0,6} in @filename[.!]?$"#,
+            options: .regularExpression
+        ) != nil {
+            return true
+        }
+
         return false
     }
 
@@ -958,6 +982,18 @@ final class AccessibilityService {
         let matched = waitForTerminalRewrite(text, in: element)
         restorePasteboardItems(snapshot, to: pasteboard)
         return matched
+    }
+
+    private func insertTerminalText(_ text: String, into element: AXUIElement) -> Bool {
+        if pasteTerminalText(text, into: element) {
+            return true
+        }
+
+        guard postUnicodeText(text) else {
+            return false
+        }
+
+        return waitForTerminalRewrite(text, in: element)
     }
 
     private func pressModifiedKey(keyCode: CGKeyCode, flags: CGEventFlags) -> Bool {

@@ -4,9 +4,9 @@ import Foundation
 func printUsage() {
     let usageLines = [
         terminalSectionTitle("用法："),
-        "  \(terminalCommand("doubao-im-auto-send [--right-ctrl|--left-ctrl|--right-option|--left-option] [--delay-ms 600] [--per-second-postdelay-ms 130] [--stable-ms 450] [--poll-ms 50] [--max-wait-ms 5000] [--min-hold-ms 250] [--log-file PATH] [--no-file-log] [--refine] [--refine-provider minimax|codex] [--refine-mode trim|correct] [--refine-model MODEL] [--refine-codex-transport sse|ws] [--refine-minimax-transport sync|sse|ws] [--refine-timeout-ms MS] [--quiet]"))",
+        "  \(terminalCommand("doubao-im-auto-send [--right-ctrl|--left-ctrl|--right-option|--left-option] [--delay-ms 600] [--per-second-postdelay-ms 130] [--stable-ms 450] [--poll-ms 50] [--max-wait-ms 5000] [--min-hold-ms 250] [--log-file PATH] [--no-file-log] [--refine] [--refine-provider minimax|codex] [--refine-mode trim|correct] [--refine-model MODEL] [--refine-min-chars 15] [--refine-codex-transport sse|ws] [--refine-minimax-transport sync|sse|ws] [--refine-timeout-ms MS] [--quiet]"))",
         "  \(terminalCommand("doubao-im-auto-send --check"))",
-        "  \(terminalCommand("doubao-im-auto-send --refine-text \"这个事情大概就是这样这样\" [--refine-provider minimax|codex] [--refine-mode trim|correct] [--refine-model MODEL] [--refine-codex-transport sse|ws] [--refine-minimax-transport sync|sse|ws] [--refine-timeout-ms MS]"))",
+        "  \(terminalCommand("doubao-im-auto-send --refine-text \"这个事情大概就是这样这样\" [--refine-provider minimax|codex] [--refine-mode trim|correct] [--refine-model MODEL] [--refine-min-chars 15] [--refine-codex-transport sse|ws] [--refine-minimax-transport sync|sse|ws] [--refine-timeout-ms MS]"))",
         "  \(terminalCommand("doubao-im-auto-send --rewrite-text \"重写后的文本\""))",
         "",
         terminalSectionTitle("行为："),
@@ -62,6 +62,7 @@ func printCheck(config: Config, accessibility: AccessibilityService) {
         "\(terminalLabel("refine provider:")) \(config.refineProvider.rawValue)",
         "\(terminalLabel("refine 模式:")) \(config.refineMode.rawValue)",
         "\(terminalLabel("refine 模型:")) \(config.refineModel)",
+        "\(terminalLabel("refine 最小长度:")) \(config.refineMinChars)",
         "\(terminalLabel("refine 超时:")) \(Int(config.refineTimeout * 1000))ms",
         "\(terminalLabel("Codex transport:")) \(config.refineCodexTransport.rawValue)",
         "\(terminalLabel("MiniMax transport:")) \(config.refineMiniMaxTransport.rawValue)",
@@ -83,6 +84,12 @@ func runRefineText(_ config: Config, logger: Logger) -> Int32 {
     guard let text = config.refineText else {
         logger.error("缺少 `--refine-text` 的文本内容。")
         return 1
+    }
+
+    if text.trimmingCharacters(in: .whitespacesAndNewlines).count < config.refineMinChars {
+        logger.log("跳过：文本长度 \(text.trimmingCharacters(in: .whitespacesAndNewlines).count) 小于 refine 最小长度 \(config.refineMinChars)")
+        print(text)
+        return 0
     }
 
     do {

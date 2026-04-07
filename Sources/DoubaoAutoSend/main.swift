@@ -1,12 +1,39 @@
 import Carbon
 import Foundation
 
+func startupTimestampDescription(_ date: Date?) -> String {
+    guard let date else { return "未知" }
+    return ISO8601DateFormatter().string(from: date)
+}
+
+func logRefineProviderStartup(config: Config, logger: Logger) {
+    switch config.refineProvider {
+    case .codex:
+        let status = CodexHTTPProvider.environmentStatus()
+        let authStatus: String
+        if !status.authConfigured {
+            authStatus = "未检测到"
+        } else if !status.authUsable {
+            authStatus = "已配置但已过期"
+        } else {
+            authStatus = status.authMode ?? "oauth"
+        }
+        logger.log("refine provider 初始化中：provider=codex，transport=\(config.refineCodexTransport.rawValue)")
+        logger.log("refine provider 本地状态：auth=\(authStatus)，source=\(status.authSource?.rawValue ?? "未检测到")，expires=\(startupTimestampDescription(status.expiresAt))，远端连接按需建立")
+    case .minimax:
+        let status = MiniMaxClient.environmentStatus()
+        let host = status.hostValidationError == nil ? status.apiHost : "\(status.apiHost)（无效）"
+        logger.log("refine provider 初始化中：provider=minimax，transport=\(config.refineMiniMaxTransport.rawValue)")
+        logger.log("refine provider 本地状态：apiKey=\(status.apiKeyPresent ? "已设置" : "未设置")，endpoint=\(status.effectiveBaseURL ?? "未知")，host=\(host)")
+    }
+}
+
 func printUsage() {
     let usageLines = [
         terminalSectionTitle("用法："),
-        "  \(terminalCommand("doubao-im-auto-send [--right-ctrl|--left-ctrl|--right-option|--left-option] [--delay-ms 600] [--per-second-postdelay-ms 130] [--stable-ms 450] [--poll-ms 50] [--max-wait-ms 5000] [--min-hold-ms 250] [--log-file PATH] [--no-file-log] [--refine] [--refine-provider minimax|codex] [--refine-mode trim|correct] [--refine-model MODEL] [--refine-min-chars 15] [--refine-codex-transport sse|ws] [--refine-minimax-transport sync|sse|ws] [--refine-timeout-ms MS] [--quiet]"))",
+        "  \(terminalCommand("doubao-im-auto-send [--right-ctrl|--left-ctrl|--right-option|--left-option] [--delay-ms 600] [--per-second-postdelay-ms 130] [--stable-ms 450] [--poll-ms 50] [--max-wait-ms 5000] [--min-hold-ms 250] [--log-file PATH] [--no-file-log] [--refine] [--refine-provider minimax|codex] [--refine-mode trim|correct] [--refine-model MODEL] [--refine-min-chars 15] [--refine-max-chars 1000] [--refine-codex-transport sse|ws] [--refine-minimax-transport sync|sse|ws] [--refine-timeout-ms MS] [--quiet]"))",
         "  \(terminalCommand("doubao-im-auto-send --check"))",
-        "  \(terminalCommand("doubao-im-auto-send --refine-text \"这个事情大概就是这样这样\" [--refine-provider minimax|codex] [--refine-mode trim|correct] [--refine-model MODEL] [--refine-min-chars 15] [--refine-codex-transport sse|ws] [--refine-minimax-transport sync|sse|ws] [--refine-timeout-ms MS]"))",
+        "  \(terminalCommand("doubao-im-auto-send --refine-text \"这个事情大概就是这样这样\" [--refine-provider minimax|codex] [--refine-mode trim|correct] [--refine-model MODEL] [--refine-min-chars 15] [--refine-max-chars 1000] [--refine-codex-transport sse|ws] [--refine-minimax-transport sync|sse|ws] [--refine-timeout-ms MS]"))",
         "  \(terminalCommand("doubao-im-auto-send --rewrite-text \"重写后的文本\""))",
         "",
         terminalSectionTitle("行为："),
@@ -65,6 +92,7 @@ func printCheck(config: Config, accessibility: AccessibilityService) {
         "\(terminalLabel("refine 模式:")) \(config.refineMode.rawValue)",
         "\(terminalLabel("refine 模型:")) \(config.refineModel)",
         "\(terminalLabel("refine 最小长度:")) \(config.refineMinChars)",
+        "\(terminalLabel("refine 最大长度:")) \(config.refineMaxChars)",
         "\(terminalLabel("refine 超时:")) \(Int(config.refineTimeout * 1000))ms",
         "\(terminalLabel("Codex transport:")) \(config.refineCodexTransport.rawValue)",
         "\(terminalLabel("MiniMax transport:")) \(config.refineMiniMaxTransport.rawValue)",
@@ -88,8 +116,15 @@ func runRefineText(_ config: Config, logger: Logger) -> Int32 {
         return 1
     }
 
-    if text.trimmingCharacters(in: .whitespacesAndNewlines).count < config.refineMinChars {
-        logger.log("跳过：文本长度 \(text.trimmingCharacters(in: .whitespacesAndNewlines).count) 小于 refine 最小长度 \(config.refineMinChars)")
+    let trimmedLength = text.trimmingCharacters(in: .whitespacesAndNewlines).count
+    if trimmedLength < config.refineMinChars {
+        logger.log("跳过：文本长度 \(trimmedLength) 小于 refine 最小长度 \(config.refineMinChars)")
+        print(text)
+        return 0
+    }
+
+    if trimmedLength > config.refineMaxChars {
+        logger.log("跳过：文本长度 \(trimmedLength) 大于 refine 最大长度 \(config.refineMaxChars)")
         print(text)
         return 0
     }
@@ -179,7 +214,11 @@ if config.rewriteText != nil {
 let refineProvider: RefineProvider?
 if config.refineEnabled {
     do {
+        logRefineProviderStartup(config: config, logger: logger)
+        let startedAt = Date()
         refineProvider = try makeRefineProvider(config: config, logger: logger)
+        let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+        logger.log("refine provider 已就绪：provider=\(config.refineProvider.rawValue)，耗时=\(elapsedMs)ms")
     } catch {
         logger.error(error.localizedDescription)
         exit(1)

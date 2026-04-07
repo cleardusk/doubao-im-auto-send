@@ -120,7 +120,7 @@ final class AutoSendEngine {
             case .minimax:
                 transportSummary = config.refineMiniMaxTransport.rawValue
             }
-            logger.log("refine：开启，provider=\(config.refineProvider.rawValue)，transport=\(transportSummary)，mode=\(config.refineMode.rawValue)，model=\(config.refineModel)，minChars=\(config.refineMinChars)，timeout=\(Int(config.refineTimeout * 1000))ms")
+            logger.log("refine：开启，provider=\(config.refineProvider.rawValue)，transport=\(transportSummary)，mode=\(config.refineMode.rawValue)，model=\(config.refineModel)，minChars=\(config.refineMinChars)，maxChars=\(config.refineMaxChars)，timeout=\(Int(config.refineTimeout * 1000))ms")
             logger.log("refine 白名单：\(config.refineAllowedAppBundleIDs.joined(separator: ", "))")
         } else {
             logger.log("refine：关闭")
@@ -373,6 +373,12 @@ final class AutoSendEngine {
 
         if sourceText.count < config.refineMinChars {
             logger.log("跳过：文本长度 \(sourceText.count) 小于 refine 最小长度 \(config.refineMinChars)，直接发送")
+            beginSyntheticAction(.directSend(snapshot: focusSnapshot, expectedTextBeforeSend: sourceText))
+            return
+        }
+
+        if sourceText.count > config.refineMaxChars {
+            logger.log("跳过：文本长度 \(sourceText.count) 大于 refine 最大长度 \(config.refineMaxChars)，直接发送")
             beginSyntheticAction(.directSend(snapshot: focusSnapshot, expectedTextBeforeSend: sourceText))
             return
         }

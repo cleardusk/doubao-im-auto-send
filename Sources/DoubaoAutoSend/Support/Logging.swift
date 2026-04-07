@@ -148,10 +148,18 @@ final class Logger {
         if message.hasPrefix("观测到") || message.hasPrefix("开始 refine") || message.hasPrefix("refine 生成成功") {
             return color(message, code: "36", enabled: stdoutColorEnabled)
         }
+        if message.hasPrefix("refine provider 初始化中")
+            || message.hasPrefix("refine provider 本地状态")
+            || message.hasPrefix("refine provider 已就绪") {
+            return color(message, code: "36", enabled: stdoutColorEnabled)
+        }
         if message.hasPrefix("开始监听") || message.hasPrefix("当前输入法") || message.hasPrefix("计算得到") || message.contains("已按下") || message.contains("已松开") || message.hasPrefix("refine：") || message.hasPrefix("文件日志") {
             return color(message, code: "34", enabled: stdoutColorEnabled)
         }
-        return message
+        if message.hasPrefix("默认 denylist") || message.hasPrefix("refine 白名单") {
+            return color(message, code: "34", enabled: stdoutColorEnabled)
+        }
+        return color(message, code: "90", enabled: stdoutColorEnabled)
     }
 
     private func color(_ text: String, code: String, enabled: Bool) -> String {
@@ -185,7 +193,7 @@ final class Logger {
             "refine 回写校验失败：",
             "terminal 读取失败：",
             "已确认发送 Enter",
-            "Enter 已触发，但未确认提交",
+            "Enter 未确认提交",
             "取消：",
             "取消待执行操作：",
             "跳过："

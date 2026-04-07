@@ -168,6 +168,7 @@ struct Config {
     let refineMode: RefineMode
     let refineModel: String
     let refineMinChars: Int
+    let refineMaxChars: Int
     let refineTimeout: TimeInterval
     let refineCodexTransport: CodexTransportMode
     let refineMiniMaxTransport: MiniMaxTransportMode
@@ -190,6 +191,7 @@ struct Config {
         var refineMode = RefineMode.trim
         var refineModel = refineProvider.defaultModel
         var refineMinChars = 30
+        var refineMaxChars = 1000
         var refineModelExplicitlySet = false
         var refineTimeout = refineProvider.defaultTimeout
         var refineTimeoutExplicitlySet = false
@@ -283,6 +285,8 @@ struct Config {
                 refineModelExplicitlySet = true
             case "--refine-min-chars":
                 refineMinChars = try parseNonNegativeInt(requireValue(for: argument), for: argument)
+            case "--refine-max-chars":
+                refineMaxChars = try parseNonNegativeInt(requireValue(for: argument), for: argument)
             case "--refine-codex-transport":
                 let value = try requireValue(for: argument)
                 guard let transport = CodexTransportMode(rawValue: value) else {
@@ -341,6 +345,7 @@ struct Config {
             refineMode: refineMode,
             refineModel: refineModel,
             refineMinChars: refineMinChars,
+            refineMaxChars: refineMaxChars,
             refineTimeout: refineTimeout,
             refineCodexTransport: refineCodexTransport,
             refineMiniMaxTransport: refineMiniMaxTransport,

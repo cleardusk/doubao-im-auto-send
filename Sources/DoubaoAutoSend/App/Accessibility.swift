@@ -65,7 +65,7 @@ final class AccessibilityService {
 
     func readText(from element: AXUIElement) -> String? {
         if isTerminalShellElement(element) {
-            return terminalEditContext(from: element)?.inputText
+            return sanitizedTerminalInputText(terminalEditContext(from: element)?.inputText ?? "")
         }
 
         let attributeNames = [kAXValueAttribute, kAXSelectedTextAttribute]
@@ -154,7 +154,7 @@ final class AccessibilityService {
 
         let normalizedExpectedBeforeSend: String?
         if let element, isTerminalShellElement(element) {
-            normalizedExpectedBeforeSend = normalizeTerminalText(
+            normalizedExpectedBeforeSend = sanitizedTerminalInputText(
                 expectedTextBeforeSend ?? terminalEditContext(from: element)?.inputText ?? ""
             )
             Thread.sleep(forTimeInterval: 0.12)
@@ -204,20 +204,16 @@ final class AccessibilityService {
             return false
         }
 
-        if context.inputText == text {
+        let normalizedTarget = normalizeTerminalText(text)
+        if normalizeTerminalText(context.inputText) == normalizedTarget {
             return true
         }
 
-        let movesToEnd = max(0, context.inputText.count - context.caretOffset)
-        guard pressKeyRepeated(keyCode: 124, count: movesToEnd) else {
+        guard clearTerminalInput(in: element, initialContext: context) else {
             return false
         }
 
-        guard pressKeyRepeated(keyCode: 51, count: context.inputText.count) else {
-            return false
-        }
-
-        Thread.sleep(forTimeInterval: 0.02)
+        Thread.sleep(forTimeInterval: 0.03)
         if pasteTerminalText(text, into: element) {
             return true
         }
@@ -242,25 +238,75 @@ final class AccessibilityService {
         return terminalInputMatches(expectedText, in: element)
     }
 
+    private func clearTerminalInput(
+        in element: AXUIElement,
+        initialContext: TerminalEditContext
+    ) -> Bool {
+        var context = initialContext
+        let maxAttempts = 3
+
+        for attempt in 0..<maxAttempts {
+            let movesToEnd = max(0, context.inputText.count - context.caretOffset)
+            guard pressKeyRepeated(keyCode: 124, count: movesToEnd, interKeyDelay: 0.003) else {
+                return false
+            }
+
+            guard pressKeyRepeated(keyCode: 51, count: context.inputText.count, interKeyDelay: 0.003) else {
+                return false
+            }
+
+            if waitForTerminalInputToClear(in: element) {
+                return true
+            }
+
+            guard attempt < maxAttempts - 1 else {
+                break
+            }
+
+            Thread.sleep(forTimeInterval: 0.03)
+            guard let refreshedContext = terminalEditContext(from: element) else {
+                return false
+            }
+            context = refreshedContext
+        }
+
+        return waitForTerminalInputToClear(in: element)
+    }
+
+    private func waitForTerminalInputToClear(in element: AXUIElement) -> Bool {
+        let timeout: TimeInterval = 0.35
+        let pollInterval: TimeInterval = 0.02
+        let deadline = Date().addingTimeInterval(timeout)
+
+        repeat {
+            if currentTerminalInputText(in: element).isEmpty {
+                return true
+            }
+            Thread.sleep(forTimeInterval: pollInterval)
+        } while Date() < deadline
+
+        return currentTerminalInputText(in: element).isEmpty
+    }
+
     private func waitForTerminalSubmission(in element: AXUIElement, previousInput: String) -> Bool {
         let timeout: TimeInterval = 0.8
         let pollInterval: TimeInterval = 0.03
         let deadline = Date().addingTimeInterval(timeout)
 
         repeat {
-            let currentInput = normalizeTerminalText(terminalEditContext(from: element)?.inputText ?? "")
+            let currentInput = sanitizedTerminalInputText(terminalEditContext(from: element)?.inputText ?? "")
             if currentInput.isEmpty || currentInput != previousInput {
                 return true
             }
             Thread.sleep(forTimeInterval: pollInterval)
         } while Date() < deadline
 
-        let finalInput = normalizeTerminalText(terminalEditContext(from: element)?.inputText ?? "")
+        let finalInput = sanitizedTerminalInputText(terminalEditContext(from: element)?.inputText ?? "")
         return finalInput.isEmpty || finalInput != previousInput
     }
 
     private func terminalInputMatches(_ expectedText: String, in element: AXUIElement) -> Bool {
-        let normalizedExpected = normalizeTerminalText(expectedText)
+        let normalizedExpected = sanitizedTerminalInputText(expectedText)
         guard let fullText = stringAttribute(kAXValueAttribute as String, from: element) else {
             return false
         }
@@ -272,16 +318,20 @@ final class AccessibilityService {
                from: bufferNSString,
                selectedRange: selectedRange
            ),
-           normalizeTerminalText(selectionContext.inputText) == normalizedExpected {
+           sanitizedTerminalInputText(selectionContext.inputText) == normalizedExpected {
             return true
         }
 
         if let tailContext = terminalEditContextFromBufferTail(bufferNSString),
-           normalizeTerminalText(tailContext.inputText) == normalizedExpected {
+           sanitizedTerminalInputText(tailContext.inputText) == normalizedExpected {
             return true
         }
 
         return false
+    }
+
+    private func currentTerminalInputText(in element: AXUIElement) -> String {
+        sanitizedTerminalInputText(terminalEditContext(from: element)?.inputText ?? "")
     }
 
     private func normalizeTerminalText(_ text: String) -> String {
@@ -290,6 +340,29 @@ final class AccessibilityService {
                 .replacingOccurrences(of: "\0", with: "")
                 .replacingOccurrences(of: "\r\n", with: "\n")
         )
+    }
+
+    private func sanitizedTerminalInputText(_ text: String) -> String {
+        let normalized = normalizeTerminalText(text)
+        guard !normalized.isEmpty else {
+            return ""
+        }
+
+        var keptLines = normalized.components(separatedBy: "\n").filter { line in
+            !shouldIgnoreTerminalInputLine(line)
+        }
+
+        while let first = keptLines.first,
+              first.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            keptLines.removeFirst()
+        }
+
+        while let last = keptLines.last,
+              last.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            keptLines.removeLast()
+        }
+
+        return keptLines.joined(separator: "\n")
     }
 
     private func terminalPreview(_ text: String, limit: Int = 120) -> String {
@@ -554,7 +627,7 @@ final class AccessibilityService {
             let firstLine = collectedLines[0]
             let lineNSString = firstLine.text as NSString
             if let inputStart = inputStartOffset(in: lineNSString, lineText: firstLine.text) {
-                return collectedLines.enumerated().map { index, line in
+                return collectedLines.enumerated().compactMap { index, line in
                     let segmentStart = index == 0 ? inputStart : 0
                     let segmentEnd = lineSegmentEnd(
                         for: line.range,
@@ -572,6 +645,9 @@ final class AccessibilityService {
                     let segmentText = (line.text as NSString).substring(
                         with: NSRange(location: segmentStart, length: segmentEnd - segmentStart)
                     )
+                    if shouldIgnoreTerminalInputLine(segmentText) {
+                        return nil
+                    }
                     return TerminalLineSegment(
                         lineRange: line.range,
                         segmentStart: segmentStart,
@@ -686,13 +762,32 @@ final class AccessibilityService {
 
         let lowercase = trimmed.lowercased()
         let codexHintTokens = [
+            "? for shortcuts",
             "tab to queue message",
             "queue message",
             "shift+tab",
             "enter to send",
-            "esc to edit"
+            "esc to edit",
+            "⏎ send",
+            "shift+⏎ newline",
+            "ctrl+t transcript",
+            "ctrl+c quit"
         ]
         if codexHintTokens.contains(where: { lowercase.contains($0) }) {
+            return true
+        }
+
+        if lowercase.contains("to get started, describe a task") {
+            return true
+        }
+
+        let codexStartupCommandHints = [
+            "/init - create an agents.md",
+            "/status - show current session",
+            "/approvals - choose what codex",
+            "/model - choose what model"
+        ]
+        if codexStartupCommandHints.contains(where: { lowercase.contains($0) }) {
             return true
         }
 
@@ -712,6 +807,28 @@ final class AccessibilityService {
 
         if separatorCount >= 3,
            codexStatusTokens.contains(where: { trimmed.localizedCaseInsensitiveContains($0) }) {
+            return true
+        }
+
+        return false
+    }
+
+    private func shouldIgnoreTerminalInputLine(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return false
+        }
+
+        return isTerminalAuxiliaryLine(trimmed) || isTerminalPlaceholderOnlyLine(trimmed)
+    }
+
+    private func isTerminalPlaceholderOnlyLine(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return false
+        }
+
+        if trimmed.caseInsensitiveCompare("Implement {feature}") == .orderedSame {
             return true
         }
 
@@ -784,7 +901,11 @@ final class AccessibilityService {
         return trimmed
     }
 
-    private func pressKeyRepeated(keyCode: CGKeyCode, count: Int) -> Bool {
+    private func pressKeyRepeated(
+        keyCode: CGKeyCode,
+        count: Int,
+        interKeyDelay: TimeInterval = 0
+    ) -> Bool {
         guard count >= 0 else {
             return false
         }
@@ -804,6 +925,9 @@ final class AccessibilityService {
             }
             down.post(tap: .cghidEventTap)
             up.post(tap: .cghidEventTap)
+            if interKeyDelay > 0 {
+                Thread.sleep(forTimeInterval: interKeyDelay)
+            }
         }
         return true
     }

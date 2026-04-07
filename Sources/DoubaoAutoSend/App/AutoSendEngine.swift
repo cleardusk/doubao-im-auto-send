@@ -7,6 +7,7 @@ private enum EnginePhase {
     case idle
     case polling
     case refining
+    case applying
 }
 
 private final class SessionState {
@@ -24,17 +25,31 @@ private final class SessionState {
     var activeRequestID: UUID?
     var focusSnapshotAtRelease: FocusedElementSnapshot?
     var loggedPendingTerminalInput = false
+    var loggedPendingRefineSettle = false
     var consoleLoggingSuppressed = false
+}
+
+private enum SyntheticAction {
+    case directSend(snapshot: FocusedElementSnapshot?, expectedTextBeforeSend: String?)
+    case rewriteThenSend(snapshot: FocusedElementSnapshot, refinedText: String)
+}
+
+private enum SyntheticActionOutcome {
+    case directSend(sendSucceeded: Bool)
+    case rewriteSuccess(length: Int, sendSucceeded: Bool)
+    case rewriteFailure(summary: String?, sendSucceeded: Bool)
 }
 
 final class AutoSendEngine {
     private static let terminalInputGraceAfterRelease: TimeInterval = 2.0
+    private static let refinePreflightExtraStableDuration: TimeInterval = 0.6
     private static let refineInputPreviewLimit = 120
 
     private let config: Config
     private let logger: Logger
     private let accessibility: AccessibilityService
     private let refineProvider: RefineProvider?
+    private let syntheticActionQueue = DispatchQueue(label: "DoubaoAutoSend.synthetic-actions")
     private let state = SessionState()
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -114,6 +129,11 @@ final class AutoSendEngine {
     }
 
     private func handle(type: CGEventType, event: CGEvent) {
+        if state.phase == .applying {
+            handleWhileApplying(type: type, event: event)
+            return
+        }
+
         switch type {
         case .flagsChanged:
             handleFlagsChanged(event)
@@ -123,6 +143,16 @@ final class AutoSendEngine {
             cancelPendingActions(reason: "发送前发生了新的鼠标输入")
         default:
             break
+        }
+    }
+
+    private func handleWhileApplying(type: CGEventType, event: CGEvent) {
+        guard type == .flagsChanged else { return }
+        let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+        guard keyCode == config.watchedModifier.keyCode else { return }
+        let isPressed = event.flags.contains(config.watchedModifier.eventFlag)
+        if isPressed {
+            logger.log("跳过：上一轮仍在回写或发送收尾")
         }
     }
 
@@ -183,6 +213,7 @@ final class AutoSendEngine {
         state.lastValueChangedAt = state.releaseStartedAt
         state.requiredReleaseDelay = computedRequiredReleaseDelay(heldFor: heldFor)
         state.phase = .polling
+        state.loggedPendingRefineSettle = false
         logger.log("松手时前台应用：\(accessibility.frontmostApplicationDescription())")
         logger.log("计算得到释放侧下界：\(Int(state.requiredReleaseDelay * 1000))ms")
         logger.log("\(config.watchedModifier.label) 已松开，等待识别优化完成并观察文本稳定")
@@ -243,13 +274,14 @@ final class AutoSendEngine {
         if currentValue != state.lastObservedValue {
             state.lastObservedValue = currentValue
             state.lastValueChangedAt = now
+            state.loggedPendingRefineSettle = false
             logger.log("观测到松手后的文本变化")
         }
 
         if let maxWaitAfterRelease = config.maxWaitAfterRelease, elapsed >= maxWaitAfterRelease {
             logSendBasis(forceByMaxWait: true)
             logger.log("达到最大等待时间，发送 Enter")
-            fireEnterSend(snapshot: currentSnapshot)
+            beginSyntheticAction(.directSend(snapshot: currentSnapshot, expectedTextBeforeSend: currentValue))
             return
         }
 
@@ -272,6 +304,19 @@ final class AutoSendEngine {
                 return
             }
 
+            if config.refineEnabled {
+                let requiredStableForRefine = config.stableDuration + Self.refinePreflightExtraStableDuration
+                if stableFor < requiredStableForRefine {
+                    if !state.loggedPendingRefineSettle {
+                        logger.log("等待：refine 前额外确认文本已稳定")
+                        state.loggedPendingRefineSettle = true
+                    }
+                    scheduleNextPoll(after: config.pollInterval)
+                    return
+                }
+            }
+
+            state.loggedPendingRefineSettle = false
             logSendBasis()
             maybeStartRefineOrSend(
                 stableText: currentValue,
@@ -288,13 +333,16 @@ final class AutoSendEngine {
         stableSnapshot: FocusedElementSnapshot?
     ) {
         guard config.refineEnabled else {
-            fireEnterSend(snapshot: stableSnapshot ?? state.focusSnapshotAtRelease)
+            beginSyntheticAction(.directSend(
+                snapshot: stableSnapshot ?? state.focusSnapshotAtRelease,
+                expectedTextBeforeSend: stableText?.trimmingCharacters(in: .whitespacesAndNewlines)
+            ))
             return
         }
 
         guard let refineProvider else {
             logger.log("跳过：refine 客户端不可用，回退原文发送")
-            fireEnterSend()
+            beginSyntheticAction(.directSend(snapshot: nil, expectedTextBeforeSend: nil))
             return
         }
 
@@ -305,13 +353,13 @@ final class AutoSendEngine {
                 logger.log("terminal 读取失败：\(accessibility.terminalReadFailureSummary(for: fallbackSnapshot.element))")
             }
             logger.log("跳过：当前输入框文本不可用，回退原文发送")
-            fireEnterSend(snapshot: fallbackSnapshot)
+            beginSyntheticAction(.directSend(snapshot: fallbackSnapshot, expectedTextBeforeSend: nil))
             return
         }
 
         guard let focusSnapshot = stableSnapshot ?? state.focusSnapshotAtRelease else {
             logger.log("跳过：当前焦点输入框不可用，回退原文发送")
-            fireEnterSend()
+            beginSyntheticAction(.directSend(snapshot: nil, expectedTextBeforeSend: nil))
             return
         }
 
@@ -388,58 +436,107 @@ final class AutoSendEngine {
         let currentText = currentSnapshot.text?.trimmingCharacters(in: .whitespacesAndNewlines)
         if currentText != sourceText {
             logger.log("跳过：输入框文本在 refine 期间发生变化，回退当前文本发送")
-            prepareForSyntheticActions()
-            fireEnterSend(snapshot: currentSnapshot)
+            beginSyntheticAction(.directSend(snapshot: currentSnapshot, expectedTextBeforeSend: nil))
             return
         }
-
-        prepareForSyntheticActions()
 
         switch result {
         case .success(let refinedText):
             logger.log("refine 输出预览：\(previewForLog(refinedText))")
             if refinedText == sourceText {
                 logger.log("跳过：refine 未改变文本，直接发送")
-                fireEnterSend(snapshot: currentSnapshot, expectedTextBeforeSend: sourceText)
+                beginSyntheticAction(.directSend(snapshot: currentSnapshot, expectedTextBeforeSend: sourceText))
                 return
             }
 
             if accessibility.usesTerminalRewrite(for: currentSnapshot.element) {
                 logger.log("refine 回写：terminal rewrite 模式")
             }
-            if accessibility.writeText(refinedText, to: currentSnapshot.element) {
-                logger.log("refine 回写成功，长度=\(refinedText.count)")
-                fireEnterSend(snapshot: currentSnapshot, expectedTextBeforeSend: refinedText)
-                return
-            }
-
-            if accessibility.usesTerminalRewrite(for: currentSnapshot.element) {
-                logger.log("refine 回写校验失败：\(accessibility.terminalRewriteFailureSummary(expectedText: refinedText, for: currentSnapshot.element))")
-            }
-            logger.log("跳过：refine 回写失败，回退原文发送")
-            fireEnterSend(snapshot: currentSnapshot)
+            beginSyntheticAction(.rewriteThenSend(snapshot: currentSnapshot, refinedText: refinedText))
         case .failure(let error):
             logger.log("跳过：refine 失败（\(error.localizedDescription)），回退原文发送")
-            fireEnterSend(snapshot: currentSnapshot)
+            beginSyntheticAction(.directSend(snapshot: currentSnapshot, expectedTextBeforeSend: nil))
         }
     }
 
-    private func fireEnterSend(
+    private func performEnterSend(
         snapshot: FocusedElementSnapshot? = nil,
         expectedTextBeforeSend: String? = nil
-    ) {
-        let sendSucceeded = accessibility.postEnter(
+    ) -> Bool {
+        accessibility.postEnter(
             enterKeyCode: config.enterKeyCode,
             for: snapshot?.element,
             expectedTextBeforeSend: expectedTextBeforeSend
         )
-        if sendSucceeded {
-            resetWorkflowState()
-            logger.log("已确认发送 Enter")
-            return
-        }
+    }
+
+    private func completeEnterSend(_ sendSucceeded: Bool) {
         resetWorkflowState()
-        logger.log("Enter 已触发，但未确认提交")
+        if sendSucceeded {
+            logger.log("已确认发送 Enter")
+        } else {
+            logger.log("Enter 已触发，但未确认提交")
+        }
+    }
+
+    private func beginSyntheticAction(_ action: SyntheticAction) {
+        prepareForSyntheticActions()
+        state.phase = .applying
+
+        syntheticActionQueue.async { [weak self] in
+            guard let self else { return }
+            let outcome = self.executeSyntheticAction(action)
+            DispatchQueue.main.async { [weak self] in
+                self?.finishSyntheticAction(outcome)
+            }
+        }
+    }
+
+    private func executeSyntheticAction(_ action: SyntheticAction) -> SyntheticActionOutcome {
+        switch action {
+        case .directSend(let snapshot, let expectedTextBeforeSend):
+            let sendSucceeded = performEnterSend(
+                snapshot: snapshot,
+                expectedTextBeforeSend: expectedTextBeforeSend
+            )
+            return .directSend(sendSucceeded: sendSucceeded)
+        case .rewriteThenSend(let snapshot, let refinedText):
+            if accessibility.writeText(refinedText, to: snapshot.element) {
+                let sendSucceeded = performEnterSend(
+                    snapshot: snapshot,
+                    expectedTextBeforeSend: refinedText
+                )
+                return .rewriteSuccess(length: refinedText.count, sendSucceeded: sendSucceeded)
+            }
+
+            let summary: String?
+            if accessibility.usesTerminalRewrite(for: snapshot.element) {
+                summary = accessibility.terminalRewriteFailureSummary(
+                    expectedText: refinedText,
+                    for: snapshot.element
+                )
+            } else {
+                summary = nil
+            }
+            let sendSucceeded = performEnterSend(snapshot: snapshot, expectedTextBeforeSend: nil)
+            return .rewriteFailure(summary: summary, sendSucceeded: sendSucceeded)
+        }
+    }
+
+    private func finishSyntheticAction(_ outcome: SyntheticActionOutcome) {
+        switch outcome {
+        case .directSend(let sendSucceeded):
+            completeEnterSend(sendSucceeded)
+        case .rewriteSuccess(let length, let sendSucceeded):
+            logger.log("refine 回写成功，长度=\(length)")
+            completeEnterSend(sendSucceeded)
+        case .rewriteFailure(let summary, let sendSucceeded):
+            if let summary {
+                logger.log("refine 回写校验失败：\(summary)")
+            }
+            logger.log("跳过：refine 回写失败，回退原文发送")
+            completeEnterSend(sendSucceeded)
+        }
     }
 
     private func logSendBasis(forceByMaxWait: Bool = false) {
@@ -487,7 +584,6 @@ final class AutoSendEngine {
         state.pendingRefineTask?.cancel()
         state.pendingRefineTask = nil
         state.activeRequestID = nil
-        state.phase = .idle
     }
 
     private func resetWorkflowState() {
@@ -504,6 +600,7 @@ final class AutoSendEngine {
         state.requiredReleaseDelay = 0
         state.focusSnapshotAtRelease = nil
         state.loggedPendingTerminalInput = false
+        state.loggedPendingRefineSettle = false
     }
 
     private func suppressConsoleLoggingForTerminal() {

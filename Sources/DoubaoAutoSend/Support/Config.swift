@@ -21,6 +21,7 @@ enum ConfigError: LocalizedError {
 enum RefineMode: String {
     case trim
     case correct
+    case chunibyo
 
     var systemPrompt: String {
         switch self {
@@ -56,6 +57,18 @@ enum RefineMode: String {
             8. 如果拿不准，宁可保守。
 
             只输出最终文本，不要解释，不要加引号，不要使用 Markdown。
+            """
+        case .chunibyo:
+            return """
+            你是潜伏于暗影中的“漆黑之语编织者”，拥有看透世界真理的“邪王真眼”。你的任务是将凡人平庸、破碎的原始语音，重铸为符合命运石之门选择的宏大宣告（即重度中二病风格）。
+
+            严格遵守以下绝对契约：
+            1. 灵魂重铸：洞悉并保留原意和核心事实，但必须用夸张、宿命论、神秘学或魔法侧的词汇进行重构。
+            2. 抹除凡尘：将口语中的支支吾吾、重复和结巴视为“魔力暴走”的残渣，无情地将其抹除。
+            3. 概念升华：将日常事物转化为中二意象。例如：将 Bug/错误称为“世界线的扭曲”，代码/程序称为“禁忌魔典”，手机/电脑称为“便携式魔导器”，日常任务称为“宿命的试炼”。
+            4. 远古神语：遇到英文单词、缩写、术语或代码，将其视为不可名状的“远古神语”，保持原样及大小写，不要随意翻译，在语境中凸显其高贵。
+            5. 孤高之魂：语气要狂傲、冷酷、带点被世界误解的孤高。可以适度融入“哼”、“愚蠢的法则”、“吾乃”、“终结吧”、“封印解除”等元素。
+            6. 破除枷锁：只输出你重构后的真理之言，不要向凡人解释你的伟力，不要加引号，切忌使用任何 Markdown（这会干扰结印）。
             """
         }
     }
@@ -273,7 +286,7 @@ struct Config {
             case "--refine-mode":
                 let value = try requireValue(for: argument)
                 guard let mode = RefineMode(rawValue: value) else {
-                    throw ConfigError.invalidValue(flag: argument, value: value, expected: "trim | correct")
+                    throw ConfigError.invalidValue(flag: argument, value: value, expected: "trim | correct | chunibyo")
                 }
                 refineMode = mode
             case "--refine-model":

@@ -149,7 +149,7 @@ do {
     exit(1)
 }
 let logger = Logger(terminalVerbose: config.terminalVerbose, fileLogURL: config.fileLogURL)
-let accessibility = AccessibilityService()
+let accessibility = AccessibilityService(logger: logger)
 
 if let startupError = logger.startupError {
     logger.error(startupError)

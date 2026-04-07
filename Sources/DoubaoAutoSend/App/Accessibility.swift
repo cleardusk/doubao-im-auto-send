@@ -22,6 +22,14 @@ private struct TerminalLineSegment {
 }
 
 final class AccessibilityService {
+    private let logger: Logger?
+    private let terminalUICandidateQueue = DispatchQueue(label: "DoubaoAutoSend.terminal-ui-candidates")
+    private var observedTerminalUICandidates = Set<String>()
+
+    init(logger: Logger? = nil) {
+        self.logger = logger
+    }
+
     func currentInputSourceID() -> String? {
         let source = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
         guard let property = TISGetInputSourceProperty(source, kTISPropertyInputSourceID) else {
@@ -365,8 +373,17 @@ final class AccessibilityService {
             return ""
         }
 
-        var keptLines = normalized.components(separatedBy: "\n").filter { line in
-            !shouldIgnoreTerminalInputLine(line)
+        var keptLines: [String] = []
+        for line in normalized.components(separatedBy: "\n") {
+            if shouldIgnoreTerminalInputLine(line) {
+                continue
+            }
+
+            let candidate = normalizedTerminalUILine(line)
+            if looksLikeUnknownTerminalUICandidate(candidate) {
+                logUnknownTerminalUICandidate(candidate)
+            }
+            keptLines.append(line)
         }
 
         while let first = keptLines.first,
@@ -768,7 +785,7 @@ final class AccessibilityService {
     }
 
     private func isTerminalAuxiliaryLine(_ line: String) -> Bool {
-        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = normalizedTerminalUILine(line)
         guard !trimmed.isEmpty else {
             return false
         }
@@ -799,11 +816,19 @@ final class AccessibilityService {
             return true
         }
 
+        if lowercase.contains("use /skills to list available skills")
+            || lowercase.contains("try the codex app")
+            || lowercase.contains("openai codex v") {
+            return true
+        }
+
         let codexStartupCommandHints = [
             "/init - create an agents.md",
             "/status - show current session",
+            "/permissions - choose what codex",
             "/approvals - choose what codex",
             "/model - choose what model",
+            "/review - review any changes",
             "/diff - show git diff",
             "/prompts - show example prompts"
         ]
@@ -849,7 +874,13 @@ final class AccessibilityService {
         }
 
         let knownPlaceholderLines = [
+            "Explain this codebase",
+            "Summarize recent commits",
             "Implement {feature}",
+            "Find and fix a bug in @filename",
+            "Write tests for @filename",
+            "Improve documentation in @filename",
+            "Run /review on my current changes",
             "Ask Codex to do anything",
             "Ask Codex to do virtually anything"
         ]
@@ -879,6 +910,35 @@ final class AccessibilityService {
         }
 
         return false
+    }
+
+    private func looksLikeUnknownTerminalUICandidate(_ line: String) -> Bool {
+        let trimmed = normalizedTerminalUILine(line)
+        guard !trimmed.isEmpty else {
+            return false
+        }
+        guard !isTerminalAuxiliaryLine(trimmed), !isTerminalPlaceholderOnlyLine(trimmed) else {
+            return false
+        }
+
+        if trimmed.range(of: #"/[A-Za-z0-9_-]+"#, options: .regularExpression) != nil {
+            return true
+        }
+
+        if trimmed.contains("@") || trimmed.contains("{") || trimmed.contains("}") {
+            return true
+        }
+
+        return false
+    }
+
+    private func logUnknownTerminalUICandidate(_ line: String) {
+        guard let logger else { return }
+        let inserted = terminalUICandidateQueue.sync {
+            observedTerminalUICandidates.insert(line).inserted
+        }
+        guard inserted else { return }
+        logger.log("观测到未收录的 Codex 建议文案：\(line)")
     }
 
     private func normalizedTerminalUILine(_ line: String) -> String {

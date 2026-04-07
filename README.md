@@ -30,6 +30,9 @@ bash install.sh
 # 使用默认参数运行
 doubao-im-auto-send
 
+# 查看当前版本
+doubao-im-auto-send --version
+
 # 查看当前参数配置等信息
 doubao-im-auto-send --check
 doubao-im-auto-send --help
@@ -48,6 +51,9 @@ doubao-im-auto-send --refine --refine-provider codex --refine-codex-transport ss
 
 # 显式使用 Codex WebSocket
 doubao-im-auto-send --refine --refine-provider codex --refine-codex-transport ws
+
+# 使用风格化 refine mode
+doubao-im-auto-send --refine --refine-mode geniusGirl
 
 # 单独测试 refine，不启动监听
 doubao-im-auto-send --refine-text "这个事情大概就是这样这样"
@@ -75,9 +81,30 @@ doubao-im-auto-send --refine-text "这个事情大概就是这样这样"
 - 默认 refine provider：`codex`
 - 默认 refine 模式：`trim`
 - 默认 refine 模型：`gpt-5.4-mini`
+- 默认 refine 最小长度：`30`
+- 默认 refine 最大长度：`1000`
 - 默认 refine 超时：`10000ms`
 - 默认 Codex transport：`sse`
 - 默认 MiniMax transport：`sync`
+- 当前 refine 白名单应用：`iTerm2`、`Terminal`
+
+## Refine 模式
+
+- `trim`
+  - 轻量精简，删除口头禅、重复和明显自我修正，适合直接发送
+- `correct`
+  - 以纠错为主，尽量修正错别字、同音误识别、漏字多字
+- `chunibyo`
+  - 重度中二风格重写，保留原意但会做夸张风格化表达
+- `geniusGirl`
+  - 天才少女风格重写，保留原意但会改成自信、俏皮、轻微傲娇的表达
+
+## Refine 触发边界
+
+- `--refine` 并不是对所有应用都生效；当前只在 `iTerm2` 和 `Terminal` 中进入 refine
+- 文本长度小于 `--refine-min-chars` 或大于 `--refine-max-chars` 时，会直接发送原文
+- 若检测到类似 `[Image #1]` 的图片占位，会跳过 refine，直接发送原文
+- 启动时会先打印 `refine provider 初始化中`、`refine provider 本地状态`、`refine provider 已就绪`，可用来判断是“监听未开始”还是“provider 尚未就绪”
 
 ## Refine Provider 配置
 
@@ -96,12 +123,14 @@ doubao-im-auto-send --refine-text "这个事情大概就是这样这样"
 - 支持 `--refine-codex-transport sse|ws`
 - `sse` 是默认模式，单次请求更稳
 - `ws` 支持同进程连接复用，更适合长时间运行场景
+- 启动日志会打印本地登录态来源、过期时间和 provider 初始化耗时
 
 ## 常见问题
 
 - 没反应：先检查权限、当前输入法是否为豆包、按住时长是否低于 `250ms`
 - 没自动发送：可能被 `Esc`、新的键盘/鼠标输入、输入法切换或前台应用切换打断
-- refine 没生效：先用 `doubao-im-auto-send --check` 确认当前 provider、token 或 `MINIMAX_API_KEY` / `MINIMAX_API_HOST` 状态
+- refine 没生效：先用 `doubao-im-auto-send --check` 确认当前 provider、本地 token / `MINIMAX_API_KEY` 状态、当前前台应用是否命中 refine 白名单，以及文本长度是否落在 `30..1000` 范围内
+- 刚启动就说话：先看日志里是否已经出现 `开始监听` 和 `refine provider 已就绪`
 - MiniMax 太慢：可试 `--refine-provider minimax --refine-minimax-transport sse`，但总完成时间不一定明显短于 `sync`
 - Codex 太慢：先试 `--refine-codex-transport ws`；如果只跑单次命令，`sse` 往往更稳
 - 某些输入框效果不稳定：脚本依赖辅助功能读取文本，部分输入框可能不可稳定读取

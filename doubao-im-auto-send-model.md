@@ -52,6 +52,15 @@ t_{\mathrm{hold}} = t_{\mathrm{release}} - t_{\mathrm{press}}
 说明：当前实现默认同时写入文件日志，路径为 `~/Library/Logs/doubao-im-auto-send/runtime.log`；`--quiet` 仅静默终端输出，`--no-file-log` 可关闭文件日志。
 说明：当前实现默认跳过常见编辑器类应用，如 VS Code、Cursor、Windsurf、JetBrains、Xcode、Sublime。
 
+## 当前 refine 边界
+
+当前实现中的 `--refine` 还有几条实现层边界，和上面的发送公式正交：
+
+1. 当前 refine 白名单仅包含 `iTerm2` 与 `Terminal`；其他前台应用会直接发送，不进入 refine。
+2. 默认 refine 最小长度为 `30`，最大长度为 `1000`；超出区间时直接发送原文。
+3. 若输入里包含类似 `[Image #1]` 的图片占位，当前会跳过 refine，避免破坏 TUI 附件语义。
+4. 启动日志会先输出 provider 初始化状态，用来区分“监听尚未开始”和“refine provider 尚未就绪”。
+
 ## 含义
 
 这个模型表达两个约束：

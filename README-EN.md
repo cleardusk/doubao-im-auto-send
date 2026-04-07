@@ -30,6 +30,9 @@ By default, it installs to `~/.local/bin/doubao-im-auto-send`. If that directory
 # Run with default parameters
 doubao-im-auto-send
 
+# Show current version
+doubao-im-auto-send --version
+
 # Check current environment
 doubao-im-auto-send --check
 doubao-im-auto-send --help
@@ -48,6 +51,9 @@ doubao-im-auto-send --refine --refine-provider codex --refine-codex-transport ss
 
 # Explicitly use Codex WebSocket
 doubao-im-auto-send --refine --refine-provider codex --refine-codex-transport ws
+
+# Use a stylized refine mode
+doubao-im-auto-send --refine --refine-mode geniusGirl
 
 # Test refine only, without event monitoring
 doubao-im-auto-send --refine-text "This is basically basically what I mean"
@@ -75,9 +81,30 @@ Terminal log example (colors are enabled only in a TTY terminal):
 - Default refine provider: `codex`
 - Default refine mode: `trim`
 - Default refine model: `gpt-5.4-mini`
+- Default refine minimum length: `30`
+- Default refine maximum length: `1000`
 - Default refine timeout: `10000ms`
 - Default Codex transport: `sse`
 - Default MiniMax transport: `sync`
+- Current refine app whitelist: `iTerm2` and `Terminal`
+
+## Refine Modes
+
+- `trim`
+  - Light cleanup for filler words, repetitions, and obvious self-corrections
+- `correct`
+  - Correction-focused mode for typos, homophone ASR errors, missing words, and extra words
+- `chunibyo`
+  - Heavy chuunibyou-style rewrite that preserves intent but stylizes the wording dramatically
+- `geniusGirl`
+  - Genius-girl-style rewrite that keeps the meaning but makes the tone confident, playful, and slightly tsundere
+
+## Refine Boundaries
+
+- `--refine` is not active in every app; it currently only runs inside `iTerm2` and `Terminal`
+- If the text is shorter than `--refine-min-chars` or longer than `--refine-max-chars`, the original text is sent directly
+- If the input contains image placeholders like `[Image #1]`, refine is skipped and the original text is sent
+- Startup logs now include `refine provider 初始化中`, `refine provider 本地状态`, and `refine provider 已就绪`, which helps distinguish “monitoring not started yet” from “provider not ready yet”
 
 ## Refine Provider Configuration
 
@@ -96,12 +123,14 @@ Terminal log example (colors are enabled only in a TTY terminal):
 - Supports `--refine-codex-transport sse|ws`
 - `sse` is the default and is usually steadier for one-off requests
 - `ws` supports connection reuse within a long-running process
+- Startup logs show local auth source, expiry, and provider initialization latency
 
 ## FAQ
 
 - No response: check permissions, confirm Doubao IME is active, and make sure hold duration is not below `250ms`
 - No auto-send: may be interrupted by `Esc`, new keyboard/mouse input, input method switch, or frontmost app switch
-- Refine not working: run `doubao-im-auto-send --check` and confirm the selected provider, token state, or `MINIMAX_API_KEY` / `MINIMAX_API_HOST`
+- Refine not working: run `doubao-im-auto-send --check` and confirm provider state, local token / `MINIMAX_API_KEY`, refine whitelist status, and whether the text length is within `30..1000`
+- Speaking immediately after launch: check whether the logs already show both `开始监听` and `refine provider 已就绪`
 - MiniMax feels slow: try `--refine-provider minimax --refine-minimax-transport sse`, but total completion time may still be close to `sync`
 - Codex feels slow: try `--refine-codex-transport ws`; for one-shot CLI calls, `sse` is often steadier
 - Unstable behavior in some input fields: the script relies on Accessibility APIs to read text, and some fields may not be consistently readable

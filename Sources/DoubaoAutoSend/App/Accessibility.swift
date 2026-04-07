@@ -787,6 +787,7 @@ final class AccessibilityService {
             "esc to edit",
             "⏎ send",
             "shift+⏎ newline",
+            "ctrl+j newline",
             "ctrl+t transcript",
             "ctrl+c quit"
         ]
@@ -802,7 +803,9 @@ final class AccessibilityService {
             "/init - create an agents.md",
             "/status - show current session",
             "/approvals - choose what codex",
-            "/model - choose what model"
+            "/model - choose what model",
+            "/diff - show git diff",
+            "/prompts - show example prompts"
         ]
         if codexStartupCommandHints.contains(where: { lowercase.contains($0) }) {
             return true
@@ -831,7 +834,7 @@ final class AccessibilityService {
     }
 
     private func shouldIgnoreTerminalInputLine(_ line: String) -> Bool {
-        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = normalizedTerminalUILine(line)
         guard !trimmed.isEmpty else {
             return false
         }
@@ -840,23 +843,52 @@ final class AccessibilityService {
     }
 
     private func isTerminalPlaceholderOnlyLine(_ line: String) -> Bool {
-        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = normalizedTerminalUILine(line)
         guard !trimmed.isEmpty else {
             return false
         }
 
-        if trimmed.caseInsensitiveCompare("Implement {feature}") == .orderedSame {
+        let knownPlaceholderLines = [
+            "Implement {feature}",
+            "Ask Codex to do anything",
+            "Ask Codex to do virtually anything"
+        ]
+        if knownPlaceholderLines.contains(where: { trimmed.caseInsensitiveCompare($0) == .orderedSame }) {
             return true
         }
 
         if trimmed.range(
-            of: #"^[A-Z][A-Za-z0-9'\/+-]*(?: [A-Za-z0-9'\/+.-]+){0,6} in @filename[.!]?$"#,
+            of: #"^Ask Codex to do (?:virtually )?anything[.!]?$"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil {
+            return true
+        }
+
+        if trimmed.range(
+            of: #"^[A-Z][A-Za-z0-9'\/+-]*(?: [A-Za-z0-9'\/+.-]+){0,8} \{[a-z0-9_-]+\}[.!]?$"#,
+            options: .regularExpression
+        ) != nil {
+            return true
+        }
+
+        if trimmed.range(
+            of: #"^[A-Z][A-Za-z0-9'\/+-]*(?: [A-Za-z0-9'\/+.-]+){0,8} (?:for|in|with|from|using|on|at|to) @[A-Za-z0-9_.-]+[.!]?$"#,
             options: .regularExpression
         ) != nil {
             return true
         }
 
         return false
+    }
+
+    private func normalizedTerminalUILine(_ line: String) -> String {
+        var trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        let promptMarkers = ["$ ", "# ", "% ", "> ", "› ", "❯ ", "➜ "]
+        for marker in promptMarkers where trimmed.hasPrefix(marker) {
+            trimmed.removeFirst(marker.count)
+            break
+        }
+        return trimmed.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func looksLikeRuntimeLogLine(_ line: String) -> Bool {

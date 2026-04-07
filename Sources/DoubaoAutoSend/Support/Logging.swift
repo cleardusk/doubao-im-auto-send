@@ -78,7 +78,8 @@ final class Logger {
         let plainLine = "[\(timestamp)] \(message)"
         fileLogger?.writeLine(plainLine)
 
-        guard terminalVerbose, consoleOutputEnabled else { return }
+        guard terminalVerbose else { return }
+        guard consoleOutputEnabled || shouldPrintWhileConsoleSuppressed(message) else { return }
         let renderedTimestamp = color("[\(timestamp)]", code: "90", enabled: stdoutColorEnabled)
         let renderedMessage = colorizeLogMessage(message)
         print("\(renderedTimestamp) \(renderedMessage)")
@@ -117,19 +118,31 @@ final class Logger {
                 contentCode: "92"
             )
         }
-        if message.hasPrefix("已发送") || message.hasPrefix("refine 回写成功") {
+        if message.hasPrefix("已发送")
+            || message.hasPrefix("已确认发送 Enter")
+            || message.hasPrefix("refine 回写成功")
+            || message.hasPrefix("refine 前后相同") {
             return color(message, code: "32", enabled: stdoutColorEnabled)
         }
         if message.hasPrefix("触发依据") {
             return color(message, code: "35", enabled: stdoutColorEnabled)
         }
+        if message.hasPrefix("refine 回写：") {
+            return color(message, code: "95", enabled: stdoutColorEnabled)
+        }
         if message.hasPrefix("当前前台应用") || message.hasPrefix("松手时前台应用") {
             return color(message, code: "96", enabled: stdoutColorEnabled)
         }
-        if message.hasPrefix("取消") || message.hasPrefix("跳过") || message.hasPrefix("达到最大等待时间") || message.hasPrefix("丢弃") {
+        if message.hasPrefix("等待：")
+            || message.hasPrefix("取消")
+            || message.hasPrefix("跳过")
+            || message.hasPrefix("达到最大等待时间")
+            || message.hasPrefix("丢弃") {
             return color(message, code: "33", enabled: stdoutColorEnabled)
         }
-        if message.contains("失败") || message.contains("无效") {
+        if message.hasPrefix("Enter 已触发，但未确认提交")
+            || message.contains("失败")
+            || message.contains("无效") {
             return color(message, code: "31", enabled: stdoutColorEnabled)
         }
         if message.hasPrefix("观测到") || message.hasPrefix("开始 refine") || message.hasPrefix("refine 生成成功") {
@@ -152,5 +165,34 @@ final class Logger {
         let renderedPrefix = color(prefix, code: "90", enabled: true)
         let renderedContent = color(content, code: contentCode, enabled: true)
         return "\(renderedPrefix)\(renderedContent)"
+    }
+
+    private func shouldPrintWhileConsoleSuppressed(_ message: String) -> Bool {
+        let importantPrefixes = [
+            "松手时前台应用：",
+            "计算得到释放侧下界：",
+            "观测到松手后的文本变化",
+            "等待：",
+            "触发依据：",
+            "开始 refine：",
+            "refine 输入预览：",
+            "refine 生成成功：",
+            "refine 输出预览：",
+            "refine 前后相同：",
+            "refine 回写：",
+            "refine 回写成功",
+            "refine 回写校验失败：",
+            "terminal 读取失败：",
+            "已确认发送 Enter",
+            "Enter 已触发，但未确认提交",
+            "取消：",
+            "取消待执行操作：",
+            "跳过："
+        ]
+        if importantPrefixes.contains(where: { message.hasPrefix($0) }) {
+            return true
+        }
+
+        return message.contains("已松开")
     }
 }

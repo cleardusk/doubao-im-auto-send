@@ -43,7 +43,6 @@ private enum SyntheticActionOutcome {
 final class AutoSendEngine {
     private static let terminalInputGraceAfterRelease: TimeInterval = 2.0
     private static let refinePreflightExtraStableDuration: TimeInterval = 0.6
-    private static let refineInputPreviewLimit = 120
 
     private let config: Config
     private let logger: Logger
@@ -371,6 +370,12 @@ final class AutoSendEngine {
             return
         }
 
+        if containsRefineAttachmentPlaceholder(sourceText) {
+            logger.log("跳过：检测到图片占位，直接发送原文")
+            beginSyntheticAction(.directSend(snapshot: focusSnapshot, expectedTextBeforeSend: sourceText))
+            return
+        }
+
         startRefine(sourceText: sourceText, focusSnapshot: focusSnapshot, provider: refineProvider)
     }
 
@@ -483,7 +488,7 @@ final class AutoSendEngine {
         if sendSucceeded {
             logger.log("已确认发送 Enter")
         } else {
-            logger.log("Enter 已触发，但未确认提交")
+            logger.log("Enter 未确认提交")
         }
     }
 
@@ -638,16 +643,8 @@ final class AutoSendEngine {
     }
 
     private func previewForLog(_ text: String) -> String {
-        let normalized = text
+        text
             .replacingOccurrences(of: "\0", with: "")
             .replacingOccurrences(of: "\n", with: "\\n")
-        if normalized.count <= Self.refineInputPreviewLimit {
-            return normalized
-        }
-        let endIndex = normalized.index(
-            normalized.startIndex,
-            offsetBy: Self.refineInputPreviewLimit
-        )
-        return "\(normalized[..<endIndex])..."
     }
 }

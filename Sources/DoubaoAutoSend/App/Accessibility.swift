@@ -21,10 +21,29 @@ private struct TerminalLineSegment {
     let text: String
 }
 
+private struct TerminalRewriteObservation {
+    let selectedText: String?
+    let tailText: String?
+}
+
 final class AccessibilityService {
+    private static let terminalRewriteStageOneTimeout: TimeInterval = 0.5
+    private static let terminalRewriteStageOnePollInterval: TimeInterval = 0.02
+    private static let terminalRewriteStageTwoSettle: TimeInterval = 0.12
+    private static let terminalRewriteStageTwoAttempts = 3
+    private static let terminalRewriteStageTwoPollInterval: TimeInterval = 0.05
+    private static let terminalRewritePreSendStabilityTimeout: TimeInterval = 0.35
+    private static let terminalRewritePreSendStabilityPollInterval: TimeInterval = 0.03
+    private static let terminalRewritePreSendStableReadings = 2
+    private static let terminalSubmissionTimeout: TimeInterval = 0.9
+    private static let terminalSubmissionPollInterval: TimeInterval = 0.03
+    private static let terminalSubmissionStableReadings = 2
+
     private let logger: Logger?
     private let terminalUICandidateQueue = DispatchQueue(label: "DoubaoAutoSend.terminal-ui-candidates")
+    private let terminalRewriteStateQueue = DispatchQueue(label: "DoubaoAutoSend.terminal-rewrite-state")
     private var observedTerminalUICandidates = Set<String>()
+    private var lastTerminalRewriteFailureSummary: (expectedText: String, summary: String)?
 
     init(logger: Logger? = nil) {
         self.logger = logger
@@ -115,31 +134,23 @@ final class AccessibilityService {
     }
 
     func terminalRewriteFailureSummary(expectedText: String, for element: AXUIElement) -> String {
-        let expectedPreview = terminalPreview(normalizeTerminalText(expectedText))
-        guard let fullText = stringAttribute(kAXValueAttribute as String, from: element) else {
-            return "expected=\(expectedPreview), selected=<nil>, tail=<nil>"
+        let normalizedExpected = normalizeTerminalText(expectedText)
+        if let cachedSummary = terminalRewriteStateQueue.sync(execute: { () -> String? in
+            guard let cached = lastTerminalRewriteFailureSummary,
+                  cached.expectedText == normalizedExpected else {
+                return nil
+            }
+            return cached.summary
+        }) {
+            return cachedSummary
         }
 
-        let bufferNSString = fullText.replacingOccurrences(of: "\0", with: "") as NSString
-        let selectedPreview: String
-        if let selectedRange = rangeAttribute(kAXSelectedTextRangeAttribute as String, from: element),
-           let selectionContext = terminalEditContext(from: bufferNSString, selectedRange: selectedRange) {
-            selectedPreview = terminalPreview(normalizeTerminalText(selectionContext.inputText))
-        } else {
-            selectedPreview = "<nil>"
-        }
-
-        let tailPreview: String
-        if let tailContext = terminalEditContextFromBufferTail(bufferNSString) {
-            tailPreview = terminalPreview(normalizeTerminalText(tailContext.inputText))
-        } else {
-            tailPreview = "<nil>"
-        }
-
-        return "expected=\(expectedPreview), selected=\(selectedPreview), tail=\(tailPreview)"
+        let observation = terminalRewriteObservation(in: element)
+        return terminalRewriteFailureSummary(expectedText: expectedText, observation: observation)
     }
 
     func writeText(_ text: String, to element: AXUIElement) -> Bool {
+        clearTerminalRewriteFailureSummary()
         if isTerminalShellElement(element) {
             return rewriteTerminalInput(text, in: element)
         }
@@ -165,6 +176,15 @@ final class AccessibilityService {
             normalizedExpectedBeforeSend = sanitizedTerminalInputText(
                 expectedTextBeforeSend ?? terminalEditContext(from: element)?.inputText ?? ""
             )
+            if let normalizedExpectedBeforeSend,
+               !normalizedExpectedBeforeSend.isEmpty,
+               !waitForStableTerminalRewriteBeforeSend(
+                    expectedText: normalizedExpectedBeforeSend,
+                    in: element
+               ) {
+                logger?.log("跳过：回写结果未稳定，取消发送 Enter")
+                return false
+            }
             Thread.sleep(forTimeInterval: 0.12)
         } else {
             normalizedExpectedBeforeSend = nil
@@ -249,18 +269,45 @@ final class AccessibilityService {
     }
 
     private func waitForTerminalRewrite(_ expectedText: String, in element: AXUIElement) -> Bool {
-        let timeout: TimeInterval = 0.5
-        let pollInterval: TimeInterval = 0.02
-        let deadline = Date().addingTimeInterval(timeout)
+        let deadline = Date().addingTimeInterval(Self.terminalRewriteStageOneTimeout)
+        let normalizedExpected = sanitizedTerminalInputText(expectedText)
 
         repeat {
-            if terminalInputMatches(expectedText, in: element) {
+            let observation = terminalRewriteObservation(in: element)
+            if observationMatchesTerminalRewrite(observation, normalizedExpected: normalizedExpected) {
+                clearTerminalRewriteFailureSummary()
                 return true
             }
-            Thread.sleep(forTimeInterval: pollInterval)
+            Thread.sleep(forTimeInterval: Self.terminalRewriteStageOnePollInterval)
         } while Date() < deadline
 
-        return terminalInputMatches(expectedText, in: element)
+        let finalStageOneObservation = terminalRewriteObservation(in: element)
+        if observationMatchesTerminalRewrite(finalStageOneObservation, normalizedExpected: normalizedExpected) {
+            clearTerminalRewriteFailureSummary()
+            return true
+        }
+
+        logger?.log("等待：回写校验进入二次确认")
+        Thread.sleep(forTimeInterval: Self.terminalRewriteStageTwoSettle)
+
+        var latestObservation = finalStageOneObservation
+        for attempt in 0..<Self.terminalRewriteStageTwoAttempts {
+            latestObservation = terminalRewriteObservation(in: element)
+            if observationMatchesTerminalRewrite(latestObservation, normalizedExpected: normalizedExpected) {
+                clearTerminalRewriteFailureSummary()
+                return true
+            }
+
+            if attempt < Self.terminalRewriteStageTwoAttempts - 1 {
+                Thread.sleep(forTimeInterval: Self.terminalRewriteStageTwoPollInterval)
+            }
+        }
+
+        cacheTerminalRewriteFailureSummary(
+            expectedText: expectedText,
+            summary: terminalRewriteFailureSummary(expectedText: expectedText, observation: latestObservation)
+        )
+        return false
     }
 
     private func clearTerminalInput(
@@ -304,59 +351,221 @@ final class AccessibilityService {
         let deadline = Date().addingTimeInterval(timeout)
 
         repeat {
-            if currentTerminalInputText(in: element).isEmpty {
+            if let currentInput = readableCurrentTerminalInputText(in: element),
+               currentInput.isEmpty {
                 return true
             }
             Thread.sleep(forTimeInterval: pollInterval)
         } while Date() < deadline
 
-        return currentTerminalInputText(in: element).isEmpty
+        return readableCurrentTerminalInputText(in: element)?.isEmpty == true
     }
 
     private func waitForTerminalSubmission(in element: AXUIElement, previousInput: String) -> Bool {
-        let timeout: TimeInterval = 0.8
-        let pollInterval: TimeInterval = 0.03
-        let deadline = Date().addingTimeInterval(timeout)
+        let deadline = Date().addingTimeInterval(Self.terminalSubmissionTimeout)
+        var consecutiveEmptyReadings = 0
 
         repeat {
-            let currentInput = sanitizedTerminalInputText(terminalEditContext(from: element)?.inputText ?? "")
-            if currentInput.isEmpty || currentInput != previousInput {
-                return true
+            if let currentInput = readableCurrentTerminalInputText(in: element),
+               currentInput.isEmpty {
+                consecutiveEmptyReadings += 1
+                if consecutiveEmptyReadings >= Self.terminalSubmissionStableReadings {
+                    return true
+                }
+            } else {
+                consecutiveEmptyReadings = 0
             }
-            Thread.sleep(forTimeInterval: pollInterval)
+            Thread.sleep(forTimeInterval: Self.terminalSubmissionPollInterval)
         } while Date() < deadline
 
-        let finalInput = sanitizedTerminalInputText(terminalEditContext(from: element)?.inputText ?? "")
-        return finalInput.isEmpty || finalInput != previousInput
+        return false
     }
 
-    private func terminalInputMatches(_ expectedText: String, in element: AXUIElement) -> Bool {
-        let normalizedExpected = sanitizedTerminalInputText(expectedText)
-        guard let fullText = stringAttribute(kAXValueAttribute as String, from: element) else {
-            return false
-        }
-
-        let bufferNSString = fullText.replacingOccurrences(of: "\0", with: "") as NSString
-
-        if let selectedRange = rangeAttribute(kAXSelectedTextRangeAttribute as String, from: element),
-           let selectionContext = terminalEditContext(
-               from: bufferNSString,
-               selectedRange: selectedRange
-           ),
-           sanitizedTerminalInputText(selectionContext.inputText) == normalizedExpected {
+    private func observationMatchesTerminalRewrite(
+        _ observation: TerminalRewriteObservation,
+        normalizedExpected: String
+    ) -> Bool {
+        if let selectedText = observation.selectedText,
+           terminalRewriteTextsEquivalent(
+               sanitizedTerminalInputText(selectedText),
+               normalizedExpected
+           ) {
             return true
         }
 
-        if let tailContext = terminalEditContextFromBufferTail(bufferNSString),
-           sanitizedTerminalInputText(tailContext.inputText) == normalizedExpected {
+        if let tailText = observation.tailText,
+           terminalRewriteTextsEquivalent(
+               sanitizedTerminalInputText(tailText),
+               normalizedExpected
+           ) {
             return true
         }
 
         return false
     }
 
+    private func waitForStableTerminalRewriteBeforeSend(
+        expectedText: String,
+        in element: AXUIElement
+    ) -> Bool {
+        let normalizedExpected = sanitizedTerminalInputText(expectedText)
+        guard !normalizedExpected.isEmpty else {
+            return true
+        }
+
+        let deadline = Date().addingTimeInterval(Self.terminalRewritePreSendStabilityTimeout)
+        var consecutiveMatches = 0
+
+        repeat {
+            let observation = terminalRewriteObservation(in: element)
+            if observationMatchesTerminalRewrite(observation, normalizedExpected: normalizedExpected) {
+                consecutiveMatches += 1
+                if consecutiveMatches >= Self.terminalRewritePreSendStableReadings {
+                    return true
+                }
+            } else {
+                consecutiveMatches = 0
+            }
+            Thread.sleep(forTimeInterval: Self.terminalRewritePreSendStabilityPollInterval)
+        } while Date() < deadline
+
+        return false
+    }
+
+    private func terminalRewriteTextsEquivalent(_ lhs: String, _ rhs: String) -> Bool {
+        if lhs == rhs {
+            return true
+        }
+        return normalizedMixedScriptBoundarySpacing(lhs) == normalizedMixedScriptBoundarySpacing(rhs)
+    }
+
+    // Terminal/TUI occasionally inserts or drops spaces or soft-wrap newlines at
+    // Han <-> ASCII boundaries, and sometimes inside Han text itself. Treat only
+    // those cases as equivalent without relaxing other whitespace differences.
+    private func normalizedMixedScriptBoundarySpacing(_ text: String) -> String {
+        let characters = Array(text)
+        guard !characters.isEmpty else {
+            return text
+        }
+
+        var result = String()
+        var index = 0
+
+        while index < characters.count {
+            if isSoftWrapWhitespace(characters[index]) {
+                let whitespaceStart = index
+                while index < characters.count, isSoftWrapWhitespace(characters[index]) {
+                    index += 1
+                }
+
+                let previous = whitespaceStart > 0 ? characters[whitespaceStart - 1] : nil
+                let next = index < characters.count ? characters[index] : nil
+                if let previous, let next,
+                   isMixedScriptBoundary(previous: previous, next: next) {
+                    continue
+                }
+
+                for whitespaceIndex in whitespaceStart..<index {
+                    result.append(characters[whitespaceIndex])
+                }
+                continue
+            }
+
+            result.append(characters[index])
+            index += 1
+        }
+
+        return result
+    }
+
+    private func isMixedScriptBoundary(previous: Character, next: Character) -> Bool {
+        (isHanCharacter(previous) && isHanCharacter(next))
+            || (isHanCharacter(previous) && isASCIITokenCharacter(next))
+            || (isASCIITokenCharacter(previous) && isHanCharacter(next))
+    }
+
+    private func isSoftWrapWhitespace(_ character: Character) -> Bool {
+        character.unicodeScalars.allSatisfy { CharacterSet.whitespacesAndNewlines.contains($0) }
+    }
+
+    private func isASCIITokenCharacter(_ character: Character) -> Bool {
+        character.unicodeScalars.allSatisfy { scalar in
+            scalar.isASCII && CharacterSet.alphanumerics.contains(scalar)
+        }
+    }
+
+    private func isHanCharacter(_ character: Character) -> Bool {
+        character.unicodeScalars.contains { scalar in
+            switch scalar.value {
+            case 0x3400...0x4DBF,
+                 0x4E00...0x9FFF,
+                 0xF900...0xFAFF,
+                 0x20000...0x2A6DF,
+                 0x2A700...0x2B73F,
+                 0x2B740...0x2B81F,
+                 0x2B820...0x2CEAF,
+                 0x2CEB0...0x2EBEF,
+                 0x30000...0x3134F:
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
     private func currentTerminalInputText(in element: AXUIElement) -> String {
         sanitizedTerminalInputText(terminalEditContext(from: element)?.inputText ?? "")
+    }
+
+    private func readableCurrentTerminalInputText(in element: AXUIElement) -> String? {
+        guard let context = terminalEditContext(from: element) else {
+            return nil
+        }
+        return sanitizedTerminalInputText(context.inputText)
+    }
+
+    private func terminalRewriteObservation(in element: AXUIElement) -> TerminalRewriteObservation {
+        guard let fullText = stringAttribute(kAXValueAttribute as String, from: element) else {
+            return TerminalRewriteObservation(selectedText: nil, tailText: nil)
+        }
+
+        let bufferNSString = fullText.replacingOccurrences(of: "\0", with: "") as NSString
+        let selectedText: String?
+        if let selectedRange = rangeAttribute(kAXSelectedTextRangeAttribute as String, from: element),
+           let selectionContext = terminalEditContext(from: bufferNSString, selectedRange: selectedRange) {
+            selectedText = selectionContext.inputText
+        } else {
+            selectedText = nil
+        }
+
+        let tailText = terminalEditContextFromBufferTail(bufferNSString)?.inputText
+        return TerminalRewriteObservation(selectedText: selectedText, tailText: tailText)
+    }
+
+    private func terminalRewriteFailureSummary(
+        expectedText: String,
+        observation: TerminalRewriteObservation
+    ) -> String {
+        let expectedPreview = terminalPreview(normalizeTerminalText(expectedText))
+        let selectedPreview = observation.selectedText.map {
+            terminalPreview(normalizeTerminalText($0))
+        } ?? "<nil>"
+        let tailPreview = observation.tailText.map {
+            terminalPreview(normalizeTerminalText($0))
+        } ?? "<nil>"
+        return "expected=\(expectedPreview), selected=\(selectedPreview), tail=\(tailPreview)"
+    }
+
+    private func cacheTerminalRewriteFailureSummary(expectedText: String, summary: String) {
+        terminalRewriteStateQueue.sync {
+            lastTerminalRewriteFailureSummary = (normalizeTerminalText(expectedText), summary)
+        }
+    }
+
+    private func clearTerminalRewriteFailureSummary() {
+        terminalRewriteStateQueue.sync {
+            lastTerminalRewriteFailureSummary = nil
+        }
     }
 
     private func normalizeTerminalText(_ text: String) -> String {

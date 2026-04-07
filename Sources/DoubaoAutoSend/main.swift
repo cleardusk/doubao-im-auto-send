@@ -92,6 +92,12 @@ func runRefineText(_ config: Config, logger: Logger) -> Int32 {
         return 0
     }
 
+    if containsRefineAttachmentPlaceholder(text) {
+        logger.log("跳过：检测到图片占位，直接输出原文")
+        print(text)
+        return 0
+    }
+
     do {
         let providerLogger = Logger(terminalVerbose: false, fileLogURL: config.fileLogURL)
         let provider = try makeRefineProvider(config: config, logger: providerLogger)

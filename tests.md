@@ -15,7 +15,7 @@
 在仓库根目录执行：
 
 ```bash
-cd doubao-auto-send-llm
+cd doubao-im-auto-send
 swift build -c release
 ```
 

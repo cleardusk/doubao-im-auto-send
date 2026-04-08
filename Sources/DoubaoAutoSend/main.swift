@@ -33,14 +33,15 @@ func printUsage() {
         "  1. 监听指定修饰键的长按与松开。",
         "  2. 仅在当前输入法为豆包输入法时生效。",
         "  3. 默认跳过常见编辑器类应用，如 VS Code、Cursor、Windsurf、JetBrains、Xcode、Sublime。",
-        "  4. 松手后先满足释放侧下界，再等待文本稳定。",
-        "  5. 若启用 `--refine`，会在自动发送前调用 Codex OAuth HTTP provider 做文本 refine。",
-        "  6. 如果前台应用、输入法、焦点输入框或用户输入发生变化，或按下 Esc，则取消自动发送。",
-        "  7. `--max-wait-ms` 为可选兜底参数；默认关闭。",
-        "  8. 默认同时写入终端和文件日志：\(Config.defaultLogFilePath)",
-        "  9. `--quiet` 仅静默终端；`--no-file-log` 关闭文件日志。",
-        " 10. `codex` 需要本机已有 `openclaw models auth login --provider openai-codex` 或 `codex login` 登录态，并且只读取本地 token，不自动 refresh。",
-        " 11. `codex` 支持 `sse` 或 `ws` 两种模式；默认是 `sse`。"
+        "  4. 触发键若与其他按键形成组合，本轮会直接跳过，不进入识别。",
+        "  5. 松手后先满足释放侧下界，再等待文本稳定。",
+        "  6. 若启用 `--refine`，会在自动发送前调用 Codex OAuth HTTP provider 做文本 refine。",
+        "  7. 如果前台应用、输入法、焦点输入框或用户输入发生变化，或按下 Esc，则取消自动发送。",
+        "  8. `--max-wait-ms` 为可选兜底参数；默认关闭。",
+        "  9. 默认同时写入终端和文件日志：\(Config.defaultLogFilePath)",
+        " 10. `--quiet` 仅静默终端；`--no-file-log` 关闭文件日志。",
+        " 11. `codex` 需要本机已有 `openclaw models auth login --provider openai-codex` 或 `codex login` 登录态，并且只读取本地 token，不自动 refresh。",
+        " 12. `codex` 支持 `sse` 或 `ws` 两种模式；默认是 `sse`。"
     ]
     print(usageLines.joined(separator: "\n"))
 }

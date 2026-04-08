@@ -76,6 +76,7 @@ doubao-im-auto-send --refine-text "我今天想说明一下这个事情的背景
 - `max-wait` 默认关闭
 - 默认跳过常见编辑器类应用，如 VS Code、Cursor、Windsurf、JetBrains、Xcode、Sublime
 - 默认文件日志：`~/Library/Logs/doubao-im-auto-send/runtime.log`
+- 触发键若与其他按键形成组合，本轮会直接跳过，不进入识别
 - 等待发送阶段按 `Esc` 可取消自动发送
 - `--refine` 默认关闭；启用后会在自动发送前调用配置的 refine provider
 - 默认 refine provider：`codex`
@@ -122,7 +123,7 @@ doubao-im-auto-send --refine-text "我今天想说明一下这个事情的背景
 ## 常见问题
 
 - 没反应：先检查权限、当前输入法是否为豆包、按住时长是否低于 `250ms`
-- 没自动发送：可能被 `Esc`、新的键盘/鼠标输入、输入法切换或前台应用切换打断
+- 没自动发送：可能被组合键、`Esc`、新的键盘/鼠标输入、输入法切换或前台应用切换打断
 - refine 没生效：先用 `doubao-im-auto-send --check` 确认本地 Codex token 状态、当前前台应用是否命中 refine 白名单；文本长度门槛只会显示配置值，实际长度需要结合当前输入内容或运行日志判断
 - 刚启动就说话：先看日志里是否已经出现 `开始监听` 和 `refine provider 已就绪`
 - Codex 太慢：先试 `--refine-codex-transport ws`；如果只跑单次命令，`sse` 往往更稳

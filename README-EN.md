@@ -76,6 +76,7 @@ Terminal log example (colors are enabled only in a TTY terminal):
 - `max-wait` disabled by default
 - Common editor apps are skipped by default, including VS Code, Cursor, Windsurf, JetBrains IDEs, Xcode, and Sublime
 - Default file log: `~/Library/Logs/doubao-im-auto-send/runtime.log`
+- If the trigger key is held together with any other key, that round is skipped before recognition starts
 - Press `Esc` during the waiting-to-send phase to cancel auto-send
 - `--refine` is disabled by default; when enabled, the configured refine provider runs before auto-send
 - Default refine provider: `codex`
@@ -122,7 +123,7 @@ Terminal log example (colors are enabled only in a TTY terminal):
 ## FAQ
 
 - No response: check permissions, confirm Doubao IME is active, and make sure hold duration is not below `250ms`
-- No auto-send: may be interrupted by `Esc`, new keyboard/mouse input, input method switch, or frontmost app switch
+- No auto-send: may be interrupted by key combos, `Esc`, new keyboard/mouse input, input method switch, or frontmost app switch
 - Refine not working: run `doubao-im-auto-send --check` and confirm local Codex token state and refine whitelist status; `--check` only shows the configured length thresholds, so actual input length still needs to be verified from the current text or runtime logs
 - Speaking immediately after launch: check whether the logs already show both `开始监听` and `refine provider 已就绪`
 - Codex feels slow: try `--refine-codex-transport ws`; for one-shot CLI calls, `sse` is often steadier

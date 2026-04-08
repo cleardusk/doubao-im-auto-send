@@ -14,6 +14,7 @@ private final class SessionState {
     var phase: EnginePhase = .idle
     var isModifierPressed = false
     var pressedAt: CFAbsoluteTime = 0
+    var modifierChordSkipReason: String?
     var frontmostBundleAtRelease: String?
     var releaseStartedAt: CFAbsoluteTime = 0
     var focusedValueAtRelease: String?
@@ -43,6 +44,9 @@ private enum SyntheticActionOutcome {
 final class AutoSendEngine {
     private static let terminalInputGraceAfterRelease: TimeInterval = 2.0
     private static let refinePreflightExtraStableDuration: TimeInterval = 0.6
+    private static let capsLockKeyCode: CGKeyCode = 57
+    private static let trackedModifierKeyCodes: Set<CGKeyCode> = [54, 55, 56, 57, 58, 59, 60, 61, 62, 63]
+    private static let ignoredChordModifierKeyCodes: Set<CGKeyCode> = [capsLockKeyCode]
 
     private let config: Config
     private let logger: Logger
@@ -52,6 +56,8 @@ final class AutoSendEngine {
     private let state = SessionState()
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    private var pressedModifierKeyCodes = Set<CGKeyCode>()
+    private var pressedNonModifierKeyCodes = Set<CGKeyCode>()
 
     init(
         config: Config,
@@ -69,6 +75,7 @@ final class AutoSendEngine {
         let mask =
             (1 << CGEventType.flagsChanged.rawValue) |
             (1 << CGEventType.keyDown.rawValue) |
+            (1 << CGEventType.keyUp.rawValue) |
             (1 << CGEventType.leftMouseDown.rawValue) |
             (1 << CGEventType.rightMouseDown.rawValue) |
             (1 << CGEventType.otherMouseDown.rawValue)
@@ -122,6 +129,8 @@ final class AutoSendEngine {
     }
 
     private func handle(type: CGEventType, event: CGEvent) {
+        updatePressedKeyState(type: type, event: event)
+
         if state.phase == .applying {
             handleWhileApplying(type: type, event: event)
             return
@@ -132,6 +141,8 @@ final class AutoSendEngine {
             handleFlagsChanged(event)
         case .keyDown:
             handleKeyDown(event)
+        case .keyUp:
+            break
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
             cancelPendingActions(reason: "发送前发生了新的鼠标输入")
         default:
@@ -143,7 +154,7 @@ final class AutoSendEngine {
         guard type == .flagsChanged else { return }
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
         guard keyCode == config.watchedModifier.keyCode else { return }
-        let isPressed = event.flags.contains(config.watchedModifier.eventFlag)
+        let isPressed = pressedModifierKeyCodes.contains(config.watchedModifier.keyCode)
         if isPressed {
             logger.log("跳过：上一轮仍在回写或发送收尾")
         }
@@ -151,6 +162,9 @@ final class AutoSendEngine {
 
     private func handleKeyDown(_ event: CGEvent) {
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+        if state.isModifierPressed, keyCode != config.watchedModifier.keyCode {
+            markCurrentModifierChord(keyCode: keyCode)
+        }
         if keyCode == config.escapeKeyCode {
             cancelPendingActions(reason: "按下 Esc，取消自动发送")
             return
@@ -162,19 +176,36 @@ final class AutoSendEngine {
 
     private func handleFlagsChanged(_ event: CGEvent) {
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
-        guard keyCode == config.watchedModifier.keyCode else { return }
+        guard keyCode == config.watchedModifier.keyCode else {
+            if state.isModifierPressed,
+               Self.trackedModifierKeyCodes.contains(keyCode),
+               !Self.ignoredChordModifierKeyCodes.contains(keyCode) {
+                markCurrentModifierChord(keyCode: keyCode)
+            }
+            return
+        }
 
-        let isPressed = event.flags.contains(config.watchedModifier.eventFlag)
+        let isPressed = pressedModifierKeyCodes.contains(config.watchedModifier.keyCode)
         if isPressed && !state.isModifierPressed {
+            cancelPendingActions(reason: "再次按下\(config.watchedModifier.label)")
             state.isModifierPressed = true
             state.pressedAt = CFAbsoluteTimeGetCurrent()
-            cancelPendingActions(reason: "再次按下\(config.watchedModifier.label)")
+            state.modifierChordSkipReason = nil
+            if let concurrentKeyCode = concurrentlyPressedChordKeyExcludingTrigger() {
+                markCurrentModifierChord(keyCode: concurrentKeyCode)
+            }
             logger.log("\(config.watchedModifier.label) 已按下")
             return
         }
 
         if !isPressed && state.isModifierPressed {
             state.isModifierPressed = false
+            if let reason = state.modifierChordSkipReason {
+                logger.log("跳过：\(reason)，本轮不进入识别")
+                state.pressedAt = 0
+                state.modifierChordSkipReason = nil
+                return
+            }
             scheduleStabilizedSend()
         }
     }
@@ -611,6 +642,9 @@ final class AutoSendEngine {
         state.pendingRefineTask = nil
         state.activeRequestID = nil
         state.phase = .idle
+        state.isModifierPressed = false
+        state.pressedAt = 0
+        state.modifierChordSkipReason = nil
         state.frontmostBundleAtRelease = nil
         state.releaseStartedAt = 0
         state.focusedValueAtRelease = nil
@@ -653,6 +687,49 @@ final class AutoSendEngine {
             return requiredDelay
         }
         return min(maxWaitAfterRelease, requiredDelay)
+    }
+
+    private func markCurrentModifierChord(keyCode: CGKeyCode) {
+        guard state.modifierChordSkipReason == nil,
+              keyCode != config.watchedModifier.keyCode,
+              !Self.ignoredChordModifierKeyCodes.contains(keyCode) else {
+            return
+        }
+        state.modifierChordSkipReason = "\(config.watchedModifier.label) 与其他按键形成组合（keyCode=\(keyCode)）"
+    }
+
+    private func updatePressedKeyState(type: CGEventType, event: CGEvent) {
+        let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+        switch type {
+        case .flagsChanged:
+            guard Self.trackedModifierKeyCodes.contains(keyCode) else { return }
+            if pressedModifierKeyCodes.contains(keyCode) {
+                pressedModifierKeyCodes.remove(keyCode)
+            } else {
+                pressedModifierKeyCodes.insert(keyCode)
+            }
+        case .keyDown:
+            guard !Self.trackedModifierKeyCodes.contains(keyCode) else { return }
+            pressedNonModifierKeyCodes.insert(keyCode)
+        case .keyUp:
+            pressedNonModifierKeyCodes.remove(keyCode)
+        default:
+            break
+        }
+    }
+
+    private func concurrentlyPressedChordKeyExcludingTrigger() -> CGKeyCode? {
+        let pressedOtherModifiers = pressedModifierKeyCodes
+            .filter { $0 != config.watchedModifier.keyCode && !Self.ignoredChordModifierKeyCodes.contains($0) }
+            .sorted()
+        if let keyCode = pressedOtherModifiers.first {
+            return keyCode
+        }
+
+        return pressedNonModifierKeyCodes
+            .filter { $0 != config.watchedModifier.keyCode }
+            .sorted()
+            .first
     }
 
     private func previewForLog(_ text: String) -> String {

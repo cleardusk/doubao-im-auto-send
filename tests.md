@@ -195,6 +195,22 @@ swift build -c release
 
 - 不发送
 
+### 4.6 触发键组合输入
+
+按住触发键期间，故意形成组合键，例如：
+
+- `左 Option + Delete`
+- `左 Option + A`
+- 先按住 `Shift` 再按 `左 Option`
+- 先按住 `左 Option` 再按 `Command`
+
+预期：
+
+- 松手后直接跳过，不进入文本稳定检测
+- 不触发 refine
+- 不发送
+- 日志中应出现“触发键与其他按键形成组合”或等价跳过信息
+
 ## 5. fallback 路径测试
 
 ### 5.1 provider 超时

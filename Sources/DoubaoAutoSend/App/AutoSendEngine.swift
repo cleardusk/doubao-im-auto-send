@@ -112,6 +112,7 @@ final class AutoSendEngine {
 
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: eventTap, enable: true)
+        synchronizePressedModifierKeyState()
 
         let maxWaitLabel = config.maxWaitAfterRelease.map { "\(Int($0 * 1000))ms" } ?? "关闭"
         logger.log("开始监听 \(config.watchedModifier.label)，最小等待=\(Int(config.minReleaseDelay * 1000))ms，稳定窗口=\(Int(config.stableDuration * 1000))ms，最大等待=\(maxWaitLabel)，按 Esc 可取消自动发送")
@@ -129,6 +130,11 @@ final class AutoSendEngine {
     }
 
     private func handle(type: CGEventType, event: CGEvent) {
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            recoverFromDisabledEventTap()
+            return
+        }
+
         updatePressedKeyState(type: type, event: event)
 
         if state.phase == .applying {
@@ -696,6 +702,22 @@ final class AutoSendEngine {
             return
         }
         state.modifierChordSkipReason = "\(config.watchedModifier.label) 与其他按键形成组合（keyCode=\(keyCode)）"
+    }
+
+    private func recoverFromDisabledEventTap() {
+        if let eventTap {
+            CGEvent.tapEnable(tap: eventTap, enable: true)
+        }
+        synchronizePressedModifierKeyState()
+        pressedNonModifierKeyCodes.removeAll()
+    }
+
+    private func synchronizePressedModifierKeyState() {
+        pressedModifierKeyCodes = Set(
+            Self.trackedModifierKeyCodes.filter {
+                CGEventSource.keyState(.combinedSessionState, key: $0)
+            }
+        )
     }
 
     private func updatePressedKeyState(type: CGEventType, event: CGEvent) {

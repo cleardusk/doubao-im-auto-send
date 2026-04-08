@@ -1,34 +1,18 @@
 import Foundation
 
 enum RefineProviderKind: String {
-    case minimax
     case codex
 
     var displayName: String {
-        switch self {
-        case .minimax:
-            return "MiniMax"
-        case .codex:
-            return "Codex"
-        }
+        "Codex"
     }
 
     var defaultModel: String {
-        switch self {
-        case .minimax:
-            return Config.defaultMiniMaxModel
-        case .codex:
-            return Config.defaultCodexModel
-        }
+        Config.defaultCodexModel
     }
 
     var defaultTimeout: TimeInterval {
-        switch self {
-        case .minimax:
-            return 6.0
-        case .codex:
-            return 10.0
-        }
+        10.0
     }
 }
 
@@ -113,20 +97,10 @@ extension RefineProvider {
 }
 
 func makeRefineProvider(config: Config, logger: Logger) throws -> RefineProvider {
-    switch config.refineProvider {
-    case .minimax:
-        return try MiniMaxClient(logger: logger, transportMode: config.refineMiniMaxTransport)
-    case .codex:
-        return try CodexHTTPProvider(logger: logger, transportMode: config.refineCodexTransport)
-    }
+    try CodexHTTPProvider(logger: logger, transportMode: config.refineCodexTransport)
 }
 
 enum RefineSanitizer {
-    static func sanitizeMiniMax(_ content: String) -> String {
-        stripWrappingQuotes(stripCodeFence(stripThinkBlock(content)))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
     static func sanitizeCodex(_ content: String) -> String {
         let normalized = stripWrappingQuotes(stripCodeFence(stripThinkBlock(content)))
             .replacingOccurrences(of: "`", with: "")

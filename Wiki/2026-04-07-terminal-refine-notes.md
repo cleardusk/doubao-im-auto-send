@@ -162,6 +162,12 @@
 - 会记录本地认证/环境状态
 - 会记录 `refine provider 已就绪` 以及耗时
 
+### 5. MiniMax 已从主路径移除
+
+- 之前保留过 MiniMax provider 与多种 transport。
+- 但实测耗时长期落在 `7s` 到 `15s` 区间，不适合当前语音 refine 场景。
+- 当前实现已收敛为 Codex-only，相关 CLI、检查输出和文档已同步清理。
+
 ### 5. 当前新增的 refine 边界
 
 - 默认 `refineMinChars = 30`

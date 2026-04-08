@@ -59,7 +59,7 @@ t_{\mathrm{hold}} = t_{\mathrm{release}} - t_{\mathrm{press}}
 1. 当前 refine 白名单仅包含 `iTerm2` 与 `Terminal`；其他前台应用会直接发送，不进入 refine。
 2. 默认 refine 最小长度为 `30`，最大长度为 `1000`；超出区间时直接发送原文。
 3. 若输入里包含类似 `[Image #1]` 的图片占位，当前会跳过 refine，避免破坏 TUI 附件语义。
-4. 启动日志会先输出 provider 初始化状态，用来区分“监听尚未开始”和“refine provider 尚未就绪”。
+4. 启动日志会先输出 Codex provider 初始化状态，用来区分“监听尚未开始”和“refine provider 尚未就绪”。
 
 ## 含义
 

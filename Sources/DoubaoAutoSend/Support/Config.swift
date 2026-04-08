@@ -20,9 +20,11 @@ enum ConfigError: LocalizedError {
 
 enum RefineMode: String {
     case trim
+    case trimEn = "trim-en"
     case correct
     case chunibyo
     case geniusGirl
+    case laoDeng
 
     var systemPrompt: String {
         switch self {
@@ -42,6 +44,21 @@ enum RefineMode: String {
             9. 如果拿不准，宁可少改。
 
             只输出最终文本，不要解释，不要加引号，不要使用 Markdown。
+            """
+        case .trimEn:
+            return """
+            你是多语言语音转文字的后处理器兼翻译器。你的任务是将用户输入的原始口语文本（无论中文、英文还是其他语言）进行去口语化整理，并统一翻译成更简洁、自然、适合直接发送的英文最终文本。
+
+            严格遵守以下规则：
+            1. 强制英文输出：除非遇到特殊语种或确定无法或不应翻译的内容（如特定文化独有概念），否则无论输入何种语言，最终结果一律翻译为纯英文。翻译要准确传达原意、事实、倾向和结论，不扩写，不新增信息；无法翻译的部分保留原样。
+            2. 剔除废话：在翻译和整理过程中，直接删除口头禅、重复词、车轱辘话、明显的口吃和自我修正残片。
+            3. 智能容错：遇到明显的错别字或语音识别错误，应根据上下文还原真实意图后再翻译，不要把错误直接翻译过去。
+            4. 保护专用标识：术语、专有名词、品牌名、产品名、文件名、代码标识、命令、URL、邮箱、数字、版本号等，直接使用其准确的英文或通用表达，保持正确的大小写格式。
+            5. 适度规范：标点、空格和大小写只做最小必要整理；保持句子的自然流畅，不要过度书面化或变得像机器翻译。
+            6. 不做过度推测：如果原文不完整、逻辑跳跃或含糊，就按原样翻译出它残缺的状态，不追问，不自行脑补补全，不解释。
+            7. 如果拿不准，宁可保守直译。
+
+            只输出最终的文本，不要解释，不要加引号，不要使用 Markdown。
             """
         case .correct:
             return """
@@ -83,6 +100,17 @@ enum RefineMode: String {
             5. 精英习惯：对中文和英文混合内容处理得要自然优雅，符合我受过顶级教育的背景。
             6. 格式限制：只输出重构后的最终文本！不要加引号，切忌使用任何 Markdown，也不要向我解释你的思路（“本天才给出的答案就是唯一正解，不需要废话”）。
             """
+        case .laoDeng:
+            return """
+            你是在职场和江湖摸爬滚打多年的“老登”（资深老油条/老骨干）。你的任务是把小年轻们磨磨唧唧、含糊不清的口语，盘成老练、干脆、一针见血的大白话。
+
+            听好了，按这几个规矩办：
+            1. 抓重点：留住核心意思和结论，别添油加醋（“别整那些虚的，有事说事”）。
+            2. 砍废话：把那些“啊”、“那个”、结结巴巴、车轱辘话全给我掐了（“年纪轻轻说话舌头都捋不直，听着费劲”）。
+            3. 老登语气：语气要直白、老练、带点嫌弃但又极其靠谱的沧桑感。可以带点“这破事儿”、“少扯淡”、“花里胡哨”、“见得多了”、“懂了没”这种词儿。
+            4. 守规矩：英文单词、专业术语、代码该咋样就咋样（“虽然老头子看不惯这些洋词儿，但干这行该用还是得用，别给我瞎翻译”）。
+            5. 别整景：直接给出盘好的话，别给我解释，别加引号，绝对不要用 Markdown（“老头子不认你们这些花里胡哨的格式，直接上字”）。
+            """
         }
     }
 
@@ -112,12 +140,6 @@ enum RefineMode: String {
 }
 
 enum CodexTransportMode: String {
-    case sse
-    case ws
-}
-
-enum MiniMaxTransportMode: String {
-    case sync
     case sse
     case ws
 }
@@ -158,8 +180,6 @@ enum WatchedModifier {
 
 struct Config {
     static let defaultLogFilePath = "~/Library/Logs/doubao-im-auto-send/runtime.log"
-    static let defaultMiniMaxHost = "https://api.minimaxi.com"
-    static let defaultMiniMaxModel = "MiniMax-M2.7"
     static let defaultCodexModel = "gpt-5.4-mini"
     static let defaultDeniedAppBundleIDPrefixes = [
         "com.microsoft.VSCode",
@@ -197,7 +217,6 @@ struct Config {
     let refineMaxChars: Int
     let refineTimeout: TimeInterval
     let refineCodexTransport: CodexTransportMode
-    let refineMiniMaxTransport: MiniMaxTransportMode
     let refineText: String?
     let rewriteText: String?
 
@@ -222,7 +241,6 @@ struct Config {
         var refineTimeout = refineProvider.defaultTimeout
         var refineTimeoutExplicitlySet = false
         var refineCodexTransport = CodexTransportMode.sse
-        var refineMiniMaxTransport = MiniMaxTransportMode.sync
         var refineText: String?
         var rewriteText: String?
 
@@ -292,14 +310,14 @@ struct Config {
                 refineEnabled = true
             case "--refine-provider":
                 let value = try requireValue(for: argument)
-                guard let provider = RefineProviderKind(rawValue: value) else {
-                    throw ConfigError.invalidValue(flag: argument, value: value, expected: "minimax | codex")
+                guard value == RefineProviderKind.codex.rawValue else {
+                    throw ConfigError.invalidValue(flag: argument, value: value, expected: "codex（MiniMax 已移除）")
                 }
-                refineProvider = provider
+                refineProvider = .codex
             case "--refine-mode":
                 let value = try requireValue(for: argument)
                 guard let mode = RefineMode(rawValue: value) else {
-                    throw ConfigError.invalidValue(flag: argument, value: value, expected: "trim | correct | chunibyo | geniusGirl")
+                    throw ConfigError.invalidValue(flag: argument, value: value, expected: "trim | trim-en | correct | chunibyo | geniusGirl | laoDeng")
                 }
                 refineMode = mode
             case "--refine-model":
@@ -321,10 +339,7 @@ struct Config {
                 refineCodexTransport = transport
             case "--refine-minimax-transport":
                 let value = try requireValue(for: argument)
-                guard let transport = MiniMaxTransportMode(rawValue: value) else {
-                    throw ConfigError.invalidValue(flag: argument, value: value, expected: "sync | sse | ws")
-                }
-                refineMiniMaxTransport = transport
+                throw ConfigError.invalidValue(flag: argument, value: value, expected: "MiniMax 已移除；请改用 --refine-codex-transport sse | ws")
             case "--refine-timeout-ms":
                 refineTimeout = try parsePositiveMilliseconds(requireValue(for: argument), for: argument)
                 refineTimeoutExplicitlySet = true
@@ -374,7 +389,6 @@ struct Config {
             refineMaxChars: refineMaxChars,
             refineTimeout: refineTimeout,
             refineCodexTransport: refineCodexTransport,
-            refineMiniMaxTransport: refineMiniMaxTransport,
             refineText: refineText,
             rewriteText: rewriteText
         )

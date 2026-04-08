@@ -1,6 +1,6 @@
 # doubao-im-auto-send
 
-**A macOS Swift CLI that listens for Doubao IME voice input completion and automatically sends `Enter` after text becomes stable, with an optional MiniMax CN or Codex refine step before sending.**
+**A macOS Swift CLI that listens for Doubao IME voice input completion and automatically sends `Enter` after text becomes stable, with an optional Codex refine step before sending.**
 
 > Requirements: macOS, Doubao IME, and your terminal app must have both “Input Monitoring” and “Accessibility” permissions enabled.
 
@@ -40,20 +40,20 @@ doubao-im-auto-send --help
 # Enable refine
 doubao-im-auto-send --refine
 
-# Explicitly use MiniMax
-doubao-im-auto-send --refine --refine-provider minimax
-
-# Explicitly use MiniMax SSE
-doubao-im-auto-send --refine --refine-provider minimax --refine-minimax-transport sse
-
 # Explicitly use Codex SSE
 doubao-im-auto-send --refine --refine-provider codex --refine-codex-transport sse
 
 # Explicitly use Codex WebSocket
 doubao-im-auto-send --refine --refine-provider codex --refine-codex-transport ws
 
+# Clean up and translate into English
+doubao-im-auto-send --refine --refine-mode trim-en
+
 # Use a stylized refine mode
 doubao-im-auto-send --refine --refine-mode geniusGirl
+
+# Use the veteran old-hand style
+doubao-im-auto-send --refine --refine-mode laoDeng
 
 # Test refine only, without event monitoring
 doubao-im-auto-send --refine-text "This is basically basically what I mean"
@@ -85,19 +85,22 @@ Terminal log example (colors are enabled only in a TTY terminal):
 - Default refine maximum length: `1000`
 - Default refine timeout: `10000ms`
 - Default Codex transport: `sse`
-- Default MiniMax transport: `sync`
 - Current refine app whitelist: `iTerm2` and `Terminal`
 
 ## Refine Modes
 
 - `trim`
   - Light cleanup for filler words, repetitions, and obvious self-corrections
+- `trim-en`
+  - Cleans up spoken text first, then translates the final result into natural English
 - `correct`
   - Correction-focused mode for typos, homophone ASR errors, missing words, and extra words
 - `chunibyo`
   - Heavy chuunibyou-style rewrite that preserves intent but stylizes the wording dramatically
 - `geniusGirl`
   - Genius-girl-style rewrite that keeps the meaning but makes the tone confident, playful, and slightly tsundere
+- `laoDeng`
+  - Veteran-old-hand-style rewrite that keeps the meaning but makes it blunter, more seasoned, and more streetwise
 
 ## Refine Boundaries
 
@@ -107,15 +110,6 @@ Terminal log example (colors are enabled only in a TTY terminal):
 - Startup logs now include `refine provider 初始化中`, `refine provider 本地状态`, and `refine provider 已就绪`, which helps distinguish “monitoring not started yet” from “provider not ready yet”
 
 ## Refine Provider Configuration
-
-- `minimax`
-- `MINIMAX_API_KEY`: required when using `--refine --refine-provider minimax` or `--refine-text --refine-provider minimax`
-- `MINIMAX_API_HOST`: optional, defaults to `https://api.minimaxi.com`. Also accepts `https://api.minimaxi.com/v1`, `https://api.minimaxi.com/anthropic`, and `https://api.minimaxi.com/anthropic/v1`
-- Uses the Anthropic-compatible endpoint: `/anthropic/v1/messages`
-- Supports `--refine-minimax-transport sync|sse|ws`
-- `sync` is the default and stays closest to OpenClaw's current MiniMax provider behavior
-- `sse` uses Anthropic-compatible streaming events; this tool still waits for final text before writing back and sending
-- `ws` fails fast as unsupported; neither the official docs nor OpenClaw currently expose a MiniMax text WebSocket provider
 
 - `codex`
 - Requires an existing local login from `openclaw models auth login --provider openai-codex` or `codex login`
@@ -129,9 +123,8 @@ Terminal log example (colors are enabled only in a TTY terminal):
 
 - No response: check permissions, confirm Doubao IME is active, and make sure hold duration is not below `250ms`
 - No auto-send: may be interrupted by `Esc`, new keyboard/mouse input, input method switch, or frontmost app switch
-- Refine not working: run `doubao-im-auto-send --check` and confirm provider state, local token / `MINIMAX_API_KEY`, and refine whitelist status; `--check` only shows the configured length thresholds, so actual input length still needs to be verified from the current text or runtime logs
+- Refine not working: run `doubao-im-auto-send --check` and confirm local Codex token state and refine whitelist status; `--check` only shows the configured length thresholds, so actual input length still needs to be verified from the current text or runtime logs
 - Speaking immediately after launch: check whether the logs already show both `开始监听` and `refine provider 已就绪`
-- MiniMax feels slow: try `--refine-provider minimax --refine-minimax-transport sse`, but total completion time may still be close to `sync`
 - Codex feels slow: try `--refine-codex-transport ws`; for one-shot CLI calls, `sse` is often steadier
 - Unstable behavior in some input fields: the script relies on Accessibility APIs to read text, and some fields may not be consistently readable
 - Terminal-only logs: use `--no-file-log`; silent terminal output: use `--quiet`
@@ -143,7 +136,6 @@ Terminal log example (colors are enabled only in a TTY terminal):
 - [Config.swift](./Sources/DoubaoAutoSend/Support/Config.swift): config and CLI argument parsing
 - [AutoSendEngine.swift](./Sources/DoubaoAutoSend/App/AutoSendEngine.swift): main state machine and send pipeline
 - [Accessibility.swift](./Sources/DoubaoAutoSend/App/Accessibility.swift): focused element read/write helpers
-- [MiniMaxClient.swift](./Sources/DoubaoAutoSend/Providers/MiniMaxClient.swift): MiniMax CN API client
 - [RefineProvider.swift](./Sources/DoubaoAutoSend/Providers/RefineProvider.swift): refine provider abstraction and dispatch
 - [CodexHTTPProvider.swift](./Sources/DoubaoAutoSend/Providers/CodexHTTPProvider.swift): Codex SSE provider
 - [CodexWebSocketTransport.swift](./Sources/DoubaoAutoSend/Providers/CodexWebSocketTransport.swift): Codex WebSocket transport

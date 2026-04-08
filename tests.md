@@ -5,7 +5,7 @@
 验证以下链路是否正常：
 
 1. 豆包语音输入结束后能检测到文本稳定。
-2. 若启用 `--refine`，能正确调用 `Codex` 或 `MiniMax` 做 refine。
+2. 若启用 `--refine`，能正确调用 `Codex` 做 refine。
 3. refine 成功后能回写当前输入框并自动发送。
 4. 用户中途打断时能取消发送。
 5. provider 超时或失败时能回退到原文发送。
@@ -15,7 +15,7 @@
 在仓库根目录执行：
 
 ```bash
-cd /Users/guojianzhu/gjzprojects/learn-codex-and-cc/doubao-auto-send-llm
+cd doubao-auto-send-llm
 swift build -c release
 ```
 
@@ -39,7 +39,6 @@ swift build -c release
 - 版本号输出为合法的 `YYYY-MM-DD`
 - 当前输入法是豆包输入法
 - 如果要验证 `refine`，当前前台应用应为 `iTerm2` 或 `Terminal`
-- 如果测 `MiniMax`，`MINIMAX_API_KEY` 已设置
 - 如果测 `Codex`，`Codex 登录态` 不是 `未检测到`
 - 如果测 `Codex`，`Codex 登录态` 不是 `已配置但已过期`
 
@@ -82,35 +81,24 @@ swift build -c release
 - 能返回整理后的文本
 - 术语如 `PR`、`TODO`、`merge`、`main` 不应被乱改
 
-### 2.3 MiniMax sync
+### 2.3 风格模式抽测
 
 ```bash
 .build/release/doubao-im-auto-send \
-  --refine-text "我我我今天想说明一下这个事情的背景、当前判断，以及接下来准备怎么处理。" \
-  --refine-provider minimax \
-  --refine-mode correct \
-  --refine-minimax-transport sync
+  --refine-text "这个事情我先说一下，就是现在方向其实比较明确了，你帮我整理成英文发出去。" \
+  --refine-mode trim-en
+```
+
+```bash
+.build/release/doubao-im-auto-send \
+  --refine-text "这个事情我先说一下，就是现在方向其实比较明确了，你帮我整理得老练一点。" \
+  --refine-mode laoDeng
 ```
 
 预期：
 
-- 能返回整理后的文本
-- 若当前 token plan 不支持某模型，应明确报错
-
-### 2.4 MiniMax SSE
-
-```bash
-.build/release/doubao-im-auto-send \
-  --refine-text "这个 PR 你先帮我 review 一下，然后那个 TODO 先不要动，最后直接 merge 到 main 就行" \
-  --refine-provider minimax \
-  --refine-mode trim \
-  --refine-minimax-transport sse
-```
-
-预期：
-
-- 能返回整理后的文本
-- 如果超时，应有明确错误提示
+- `trim-en` 输出应为纯英文，且保留术语、专有名词和版本号
+- `laoDeng` 会明显带上更直白、老练的口气
 
 ## 3. 真正端到端测试
 
@@ -128,7 +116,7 @@ swift build -c release
   --refine-codex-transport sse
 ```
 
-也可以分别测试：
+也可以改测 `Codex + WS`：
 
 ```bash
 .build/release/doubao-im-auto-send \
@@ -136,22 +124,6 @@ swift build -c release
   --refine-provider codex \
   --refine-mode trim \
   --refine-codex-transport ws
-```
-
-```bash
-.build/release/doubao-im-auto-send \
-  --refine \
-  --refine-provider minimax \
-  --refine-mode trim \
-  --refine-minimax-transport sync
-```
-
-```bash
-.build/release/doubao-im-auto-send \
-  --refine \
-  --refine-provider minimax \
-  --refine-mode trim \
-  --refine-minimax-transport sse
 ```
 
 ### 3.2 手工操作步骤
@@ -314,15 +286,11 @@ swift build -c release
 1. `--check`
 2. `--refine-text + codex + sse`
 3. `--refine-text + codex + ws`
-4. `--refine-text + minimax + sync`
-5. `--refine-text + minimax + sse`
-6. `iTerm2` 或 `Terminal` 输入区下做 `Codex + SSE` 端到端
-7. 测取消路径
-8. 测 timeout/fallback 路径
+4. `iTerm2` 或 `Terminal` 输入区下做 `Codex + SSE` 端到端
+5. 测取消路径
+6. 测 timeout/fallback 路径
 
 ## 9. 当前已知说明
 
 - `Codex` 只读取本地 token，不自动 refresh
-- `MiniMax-M2.7-highspeed` 当前 token plan 不支持
-- `MiniMax ws` 当前不支持，会明确报错
 - `Codex ws` 的价值主要在同进程多次请求复用，单次请求不一定比 `sse` 快

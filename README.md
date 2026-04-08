@@ -1,6 +1,6 @@
 # doubao-im-auto-send
 
-**一个 macOS Swift 命令行工具：监听豆包输入法语音输入结束，在文本稳定后自动发送 `Enter`；可选在发送前接入 MiniMax CN 或 Codex refine。**
+**一个 macOS Swift 命令行工具：监听豆包输入法语音输入结束，在文本稳定后自动发送 `Enter`；可选在发送前接入 Codex refine。**
 
 > 适用前提：macOS、豆包输入法，以及你的终端应用已开启“输入监控”和“辅助功能”权限。
 
@@ -40,20 +40,20 @@ doubao-im-auto-send --help
 # 启用 refine
 doubao-im-auto-send --refine
 
-# 显式使用 MiniMax
-doubao-im-auto-send --refine --refine-provider minimax
-
-# 显式使用 MiniMax SSE
-doubao-im-auto-send --refine --refine-provider minimax --refine-minimax-transport sse
-
 # 显式使用 Codex SSE
 doubao-im-auto-send --refine --refine-provider codex --refine-codex-transport sse
 
 # 显式使用 Codex WebSocket
 doubao-im-auto-send --refine --refine-provider codex --refine-codex-transport ws
 
+# 统一整理并翻译成英文
+doubao-im-auto-send --refine --refine-mode trim-en
+
 # 使用风格化 refine mode
 doubao-im-auto-send --refine --refine-mode geniusGirl
+
+# 使用老登风格
+doubao-im-auto-send --refine --refine-mode laoDeng
 
 # 单独测试 refine，不启动监听
 doubao-im-auto-send --refine-text "我今天想说明一下这个事情的背景、当前判断，以及接下来准备怎么处理。"
@@ -85,19 +85,22 @@ doubao-im-auto-send --refine-text "我今天想说明一下这个事情的背景
 - 默认 refine 最大长度：`1000`
 - 默认 refine 超时：`10000ms`
 - 默认 Codex transport：`sse`
-- 默认 MiniMax transport：`sync`
 - 当前 refine 白名单应用：`iTerm2`、`Terminal`
 
 ## Refine 模式
 
 - `trim`
   - 轻量精简，删除口头禅、重复和明显自我修正，适合直接发送
+- `trim-en`
+  - 先去口语化整理，再统一翻译成自然、可直接发送的英文
 - `correct`
   - 以纠错为主，尽量修正错别字、同音误识别、漏字多字
 - `chunibyo`
   - 重度中二风格重写，保留原意但会做夸张风格化表达
 - `geniusGirl`
   - 天才少女风格重写，保留原意但会改成自信、俏皮、轻微傲娇的表达
+- `laoDeng`
+  - 老登风格重写，保留原意但会改成更直白、老练、带点嫌弃的大白话
 
 ## Refine 触发边界
 
@@ -107,15 +110,6 @@ doubao-im-auto-send --refine-text "我今天想说明一下这个事情的背景
 - 启动时会先打印 `refine provider 初始化中`、`refine provider 本地状态`、`refine provider 已就绪`，可用来判断是“监听未开始”还是“provider 尚未就绪”
 
 ## Refine Provider 配置
-
-- `minimax`
-- `MINIMAX_API_KEY`：必填；启用 `--refine --refine-provider minimax` 或使用 `--refine-text --refine-provider minimax` 时需要
-- `MINIMAX_API_HOST`：可选；默认 `https://api.minimaxi.com`。也兼容 `https://api.minimaxi.com/v1`、`https://api.minimaxi.com/anthropic`、`https://api.minimaxi.com/anthropic/v1`
-- 当前实现走 Anthropic 兼容接口：`/anthropic/v1/messages`
-- 支持 `--refine-minimax-transport sync|sse|ws`
-- `sync` 是默认模式，逻辑最简单，也最接近 OpenClaw 当前 MiniMax provider 的 HTTP 完成式调用
-- `sse` 使用 Anthropic 兼容流式事件；当前仍然要等最终文本完成后才会回写并发送
-- `ws` 会显式报不支持；官方文档和 OpenClaw 当前都没有 MiniMax 文本 WebSocket provider
 
 - `codex`
 - 需要本机已有 `openclaw models auth login --provider openai-codex` 或 `codex login` 登录态
@@ -129,9 +123,8 @@ doubao-im-auto-send --refine-text "我今天想说明一下这个事情的背景
 
 - 没反应：先检查权限、当前输入法是否为豆包、按住时长是否低于 `250ms`
 - 没自动发送：可能被 `Esc`、新的键盘/鼠标输入、输入法切换或前台应用切换打断
-- refine 没生效：先用 `doubao-im-auto-send --check` 确认当前 provider、本地 token / `MINIMAX_API_KEY` 状态、当前前台应用是否命中 refine 白名单；文本长度门槛只会显示配置值，实际长度需要结合当前输入内容或运行日志判断
+- refine 没生效：先用 `doubao-im-auto-send --check` 确认本地 Codex token 状态、当前前台应用是否命中 refine 白名单；文本长度门槛只会显示配置值，实际长度需要结合当前输入内容或运行日志判断
 - 刚启动就说话：先看日志里是否已经出现 `开始监听` 和 `refine provider 已就绪`
-- MiniMax 太慢：可试 `--refine-provider minimax --refine-minimax-transport sse`，但总完成时间不一定明显短于 `sync`
 - Codex 太慢：先试 `--refine-codex-transport ws`；如果只跑单次命令，`sse` 往往更稳
 - 某些输入框效果不稳定：脚本依赖辅助功能读取文本，部分输入框可能不可稳定读取
 - 只想看终端日志：加 `--no-file-log`；只想静默终端：加 `--quiet`
@@ -143,7 +136,6 @@ doubao-im-auto-send --refine-text "我今天想说明一下这个事情的背景
 - [Config.swift](./Sources/DoubaoAutoSend/Support/Config.swift)：配置与参数解析
 - [AutoSendEngine.swift](./Sources/DoubaoAutoSend/App/AutoSendEngine.swift)：主状态机与发送 pipeline
 - [Accessibility.swift](./Sources/DoubaoAutoSend/App/Accessibility.swift)：焦点输入框读取与回写
-- [MiniMaxClient.swift](./Sources/DoubaoAutoSend/Providers/MiniMaxClient.swift)：MiniMax CN API 客户端
 - [RefineProvider.swift](./Sources/DoubaoAutoSend/Providers/RefineProvider.swift)：refine provider 抽象与分流
 - [CodexHTTPProvider.swift](./Sources/DoubaoAutoSend/Providers/CodexHTTPProvider.swift)：Codex SSE provider
 - [CodexWebSocketTransport.swift](./Sources/DoubaoAutoSend/Providers/CodexWebSocketTransport.swift)：Codex WebSocket transport

@@ -5,6 +5,8 @@ enum CodexHTTPProviderError: LocalizedError {
     case invalidResponse
     case invalidHTTPStatus(Int, String)
     case invalidContent
+    case incompleteResponse
+    case refusal(String?)
     case timedOut
     case websocketFailed(String)
 
@@ -18,6 +20,13 @@ enum CodexHTTPProviderError: LocalizedError {
             return "Codex API 返回 HTTP \(statusCode)：\(message)"
         case .invalidContent:
             return "Codex 未返回可用的 refine 文本。"
+        case .incompleteResponse:
+            return "Codex SSE 响应未正常完成。"
+        case .refusal(let message):
+            if let message, !message.isEmpty {
+                return "Codex 拒绝处理 refine 请求：\(message)"
+            }
+            return "Codex 拒绝处理 refine 请求。"
         case .timedOut:
             return "Codex 请求超时。"
         case .websocketFailed(let message):
@@ -225,6 +234,14 @@ extension CodexHTTPProvider {
     }
 
     static func finalize(parser: CodexEventAccumulator) throws -> String {
+        if parser.hasRefusal {
+            throw CodexHTTPProviderError.refusal(
+                RefineSanitizer.sanitizeCodex(parser.refusalText)
+            )
+        }
+        guard parser.isCompleted else {
+            throw CodexHTTPProviderError.incompleteResponse
+        }
         let result = RefineSanitizer.sanitizeCodex(parser.finalText)
         guard !result.isEmpty else {
             throw CodexHTTPProviderError.invalidContent
@@ -321,9 +338,36 @@ extension CodexHTTPProvider {
 }
 
 final class CodexEventAccumulator {
+    private enum CompletionState {
+        case streaming
+        case completed
+        case incomplete
+    }
+
     private var deltaText = ""
+    private var refusalDeltaText = ""
     private var completedMessages: [String] = []
-    private(set) var isCompleted = false
+    private var refusalMessages: [String] = []
+    private var completionState: CompletionState = .streaming
+
+    var isCompleted: Bool {
+        completionState == .completed
+    }
+
+    var hasRefusal: Bool {
+        !refusalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var refusalText: String {
+        let joinedRefusals = refusalMessages
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+        if !joinedRefusals.isEmpty {
+            return joinedRefusals
+        }
+        return refusalDeltaText
+    }
 
     var finalText: String {
         let joinedMessages = completedMessages
@@ -375,9 +419,13 @@ final class CodexEventAccumulator {
     private func consume(event: [String: Any]) throws {
         let type = event["type"] as? String ?? ""
         switch type {
-        case "response.output_text.delta", "response.refusal.delta":
+        case "response.output_text.delta":
             if let delta = event["delta"] as? String {
                 deltaText += delta
+            }
+        case "response.refusal.delta":
+            if let delta = event["delta"] as? String {
+                refusalDeltaText += delta
             }
         case "response.output_item.done":
             if let item = event["item"] as? [String: Any],
@@ -388,17 +436,26 @@ final class CodexEventAccumulator {
                     if part["type"] as? String == "output_text" {
                         return part["text"] as? String
                     }
-                    if part["type"] as? String == "refusal" {
-                        return part["refusal"] as? String
-                    }
                     return nil
                 }.joined()
                 if !text.isEmpty {
                     completedMessages.append(text)
                 }
+
+                let refusal = content.compactMap { part -> String? in
+                    guard part["type"] as? String == "refusal" else {
+                        return nil
+                    }
+                    return part["refusal"] as? String
+                }.joined()
+                if !refusal.isEmpty {
+                    refusalMessages.append(refusal)
+                }
             }
-        case "response.completed", "response.done", "response.incomplete":
-            isCompleted = true
+        case "response.completed", "response.done":
+            completionState = .completed
+        case "response.incomplete":
+            completionState = .incomplete
         case "response.failed":
             if let response = event["response"] as? [String: Any],
                let error = response["error"] as? [String: Any],

@@ -234,13 +234,13 @@ extension CodexHTTPProvider {
     }
 
     static func finalize(parser: CodexEventAccumulator) throws -> String {
+        guard parser.isCompleted else {
+            throw CodexHTTPProviderError.incompleteResponse
+        }
         if parser.hasRefusal {
             throw CodexHTTPProviderError.refusal(
                 RefineSanitizer.sanitizeCodex(parser.refusalText)
             )
-        }
-        guard parser.isCompleted else {
-            throw CodexHTTPProviderError.incompleteResponse
         }
         let result = RefineSanitizer.sanitizeCodex(parser.finalText)
         guard !result.isEmpty else {

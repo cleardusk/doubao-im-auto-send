@@ -708,8 +708,22 @@ final class AutoSendEngine {
         if let eventTap {
             CGEvent.tapEnable(tap: eventTap, enable: true)
         }
+
+        let hadActiveRound =
+            state.isModifierPressed ||
+            state.phase != .idle ||
+            state.pendingPoll != nil ||
+            state.pendingRefineTask != nil
+
+        state.pendingPoll?.cancel()
+        state.pendingRefineTask?.cancel()
+        resetWorkflowState()
         synchronizePressedModifierKeyState()
         pressedNonModifierKeyCodes.removeAll()
+
+        if hadActiveRound {
+            logger.log("取消待执行操作：事件监听临时失效，已重置当前轮次")
+        }
     }
 
     private func synchronizePressedModifierKeyState() {

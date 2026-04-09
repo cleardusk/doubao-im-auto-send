@@ -52,6 +52,15 @@ t_{\mathrm{hold}} = t_{\mathrm{release}} - t_{\mathrm{press}}
 说明：当前实现默认同时写入文件日志，路径为 `~/Library/Logs/doubao-im-auto-send/runtime.log`；`--quiet` 仅静默终端输出，`--no-file-log` 可关闭文件日志。
 说明：当前实现默认跳过常见编辑器类应用，如 VS Code、Cursor、Windsurf、JetBrains、Xcode、Sublime。
 
+## 当前 refine 边界
+
+当前实现中的 `--refine` 还有几条实现层边界，和上面的发送公式正交：
+
+1. 当前 refine 白名单仅包含 `iTerm2` 与 `Terminal`；其他前台应用会直接发送，不进入 refine。
+2. 默认 refine 最小长度为 `30`，最大长度为 `1000`；超出区间时直接发送原文。
+3. 若输入里包含类似 `[Image #1]` 的图片占位，当前会跳过 refine，避免破坏 TUI 附件语义。
+4. 启动日志会先输出 Codex provider 初始化状态，用来区分“监听尚未开始”和“refine provider 尚未就绪”。
+
 ## 含义
 
 这个模型表达两个约束：
@@ -72,14 +81,16 @@ t_{\mathrm{hold}} = t_{\mathrm{release}} - t_{\mathrm{press}}
 
 1. 按下 `Esc`。
 2. 再次按下触发键。
-3. 前台应用切换、输入法切换，或发生新的鼠标输入。
+3. 继续发生新的键盘输入或鼠标输入。
+4. 前台应用切换、输入法切换。
+5. 当前焦点输入框发生变化或当前焦点输入框不可用。
 
 ## 附录：运行示例
 
 ### 最简运行
 
 ```bash
-swift doubao-im-auto-send.swift
+swift run doubao-im-auto-send
 ```
 
 使用脚本当前默认参数直接运行。
@@ -87,7 +98,7 @@ swift doubao-im-auto-send.swift
 ### 显式全参数运行
 
 ```bash
-swift doubao-im-auto-send.swift \
+swift run doubao-im-auto-send -- \
   --left-option \
   --delay-ms 600 \
   --per-second-postdelay-ms 130 \
@@ -102,7 +113,7 @@ swift doubao-im-auto-send.swift \
 ### 含超时兜底的全参数运行
 
 ```bash
-swift doubao-im-auto-send.swift \
+swift run doubao-im-auto-send -- \
   --left-option \
   --delay-ms 600 \
   --per-second-postdelay-ms 130 \

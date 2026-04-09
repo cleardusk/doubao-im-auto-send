@@ -1,0 +1,1365 @@
+import ApplicationServices
+import Carbon
+import Cocoa
+import CoreGraphics
+import Foundation
+
+struct FocusedElementSnapshot {
+    let bundleID: String?
+    let element: AXUIElement
+    let text: String?
+}
+
+private struct TerminalEditContext {
+    let inputText: String
+    let caretOffset: Int
+}
+
+private struct TerminalLineSegment {
+    let lineRange: NSRange
+    let segmentStart: Int
+    let text: String
+}
+
+private struct TerminalRewriteObservation {
+    let selectedText: String?
+    let tailText: String?
+}
+
+final class AccessibilityService {
+    private static let terminalRewriteStageOneTimeout: TimeInterval = 0.5
+    private static let terminalRewriteStageOnePollInterval: TimeInterval = 0.02
+    private static let terminalRewriteStageTwoSettle: TimeInterval = 0.12
+    private static let terminalRewriteStageTwoAttempts = 3
+    private static let terminalRewriteStageTwoPollInterval: TimeInterval = 0.05
+    private static let terminalRewritePreSendStabilityTimeout: TimeInterval = 0.35
+    private static let terminalRewritePreSendStabilityPollInterval: TimeInterval = 0.03
+    private static let terminalRewritePreSendStableReadings = 2
+    private static let terminalSubmissionTimeout: TimeInterval = 0.9
+    private static let terminalSubmissionPollInterval: TimeInterval = 0.03
+    private static let terminalSubmissionStableReadings = 2
+
+    private let logger: Logger?
+    private let terminalUICandidateQueue = DispatchQueue(label: "DoubaoAutoSend.terminal-ui-candidates")
+    private let terminalRewriteStateQueue = DispatchQueue(label: "DoubaoAutoSend.terminal-rewrite-state")
+    private var observedTerminalUICandidates = Set<String>()
+    private var lastTerminalRewriteFailureSummary: (expectedText: String, summary: String)?
+
+    init(logger: Logger? = nil) {
+        self.logger = logger
+    }
+
+    func currentInputSourceID() -> String? {
+        let source = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
+        guard let property = TISGetInputSourceProperty(source, kTISPropertyInputSourceID) else {
+            return nil
+        }
+        return Unmanaged<CFString>.fromOpaque(property).takeUnretainedValue() as String
+    }
+
+    func frontmostBundleID() -> String? {
+        NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+    }
+
+    func frontmostApplicationDescription() -> String {
+        guard let app = NSWorkspace.shared.frontmostApplication else {
+            return "未知"
+        }
+        let name = app.localizedName ?? "未知"
+        let bundleID = app.bundleIdentifier ?? "未知"
+        return "\(name) (\(bundleID))"
+    }
+
+    func captureFocusedElementSnapshot() -> FocusedElementSnapshot? {
+        guard let app = NSWorkspace.shared.frontmostApplication else {
+            return nil
+        }
+
+        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        var focusedElement: CFTypeRef?
+        let focusedError = AXUIElementCopyAttributeValue(axApp, kAXFocusedUIElementAttribute as CFString, &focusedElement)
+        guard focusedError == .success, let focusedElement else {
+            return nil
+        }
+
+        let element = focusedElement as! AXUIElement
+        return FocusedElementSnapshot(
+            bundleID: app.bundleIdentifier,
+            element: element,
+            text: readText(from: element)
+        )
+    }
+
+    func readText(from element: AXUIElement) -> String? {
+        if isTerminalShellElement(element) {
+            return sanitizedTerminalInputText(terminalEditContext(from: element)?.inputText ?? "")
+        }
+
+        let attributeNames = [kAXValueAttribute, kAXSelectedTextAttribute]
+        for attribute in attributeNames {
+            var value: CFTypeRef?
+            let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
+            guard error == .success, let value else { continue }
+            if let stringValue = extractString(from: value) {
+                return stringValue
+            }
+        }
+        return nil
+    }
+
+    func isSameElement(_ lhs: AXUIElement, _ rhs: AXUIElement) -> Bool {
+        CFEqual(lhs, rhs)
+    }
+
+    func usesTerminalRewrite(for element: AXUIElement) -> Bool {
+        isTerminalShellElement(element)
+    }
+
+    func terminalReadFailureSummary(for element: AXUIElement) -> String {
+        let role = stringAttribute(kAXRoleAttribute as String, from: element) ?? "nil"
+        let description = stringAttribute(kAXDescriptionAttribute as String, from: element) ?? "nil"
+
+        var rawValue: CFTypeRef?
+        let valueError = AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &rawValue)
+        let valueType = rawValue.map { String(describing: CFCopyTypeIDDescription(CFGetTypeID($0))) } ?? "nil"
+
+        let selectedRange: String
+        if let range = rangeAttribute(kAXSelectedTextRangeAttribute as String, from: element) {
+            selectedRange = "\(range.location):\(range.length)"
+        } else {
+            selectedRange = "nil"
+        }
+
+        return "role=\(role), description=\(description), valueError=\(valueError.rawValue), valueType=\(valueType), selectedRange=\(selectedRange)"
+    }
+
+    func terminalRewriteFailureSummary(expectedText: String, for element: AXUIElement) -> String {
+        let normalizedExpected = normalizeTerminalText(expectedText)
+        if let cachedSummary = terminalRewriteStateQueue.sync(execute: { () -> String? in
+            guard let cached = lastTerminalRewriteFailureSummary,
+                  cached.expectedText == normalizedExpected else {
+                return nil
+            }
+            return cached.summary
+        }) {
+            return cachedSummary
+        }
+
+        let observation = terminalRewriteObservation(in: element)
+        return terminalRewriteFailureSummary(expectedText: expectedText, observation: observation)
+    }
+
+    func writeText(_ text: String, to element: AXUIElement) -> Bool {
+        clearTerminalRewriteFailureSummary()
+        if isTerminalShellElement(element) {
+            return rewriteTerminalInput(text, in: element)
+        }
+
+        let setError = AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, text as CFTypeRef)
+        if setError == .success, readValueOnly(from: element) == text {
+            return true
+        }
+        return false
+    }
+
+    func postEnter(
+        enterKeyCode: CGKeyCode,
+        for element: AXUIElement? = nil,
+        expectedTextBeforeSend: String? = nil
+    ) -> Bool {
+        guard let source = CGEventSource(stateID: .combinedSessionState) else {
+            return false
+        }
+
+        let normalizedExpectedBeforeSend: String?
+        if let element, isTerminalShellElement(element) {
+            normalizedExpectedBeforeSend = sanitizedTerminalInputText(
+                expectedTextBeforeSend ?? terminalEditContext(from: element)?.inputText ?? ""
+            )
+            if let normalizedExpectedBeforeSend,
+               !normalizedExpectedBeforeSend.isEmpty,
+               !waitForStableTerminalRewriteBeforeSend(
+                    expectedText: normalizedExpectedBeforeSend,
+                    in: element
+               ) {
+                logger?.log("跳过：回写结果未稳定，取消发送 Enter")
+                return false
+            }
+            Thread.sleep(forTimeInterval: 0.12)
+        } else {
+            normalizedExpectedBeforeSend = nil
+        }
+
+        guard postKeyPress(keyCode: enterKeyCode, source: source) else {
+            return false
+        }
+
+        guard let element,
+              isTerminalShellElement(element),
+              let normalizedExpectedBeforeSend,
+              !normalizedExpectedBeforeSend.isEmpty else {
+            return true
+        }
+
+        if waitForTerminalSubmission(
+            in: element,
+            previousInput: normalizedExpectedBeforeSend
+        ) {
+            return true
+        }
+
+        Thread.sleep(forTimeInterval: 0.08)
+        guard postKeyPress(keyCode: 76, source: source) else {
+            return false
+        }
+        return waitForTerminalSubmission(
+            in: element,
+            previousInput: normalizedExpectedBeforeSend
+        )
+    }
+
+    private func readValueOnly(from element: AXUIElement) -> String? {
+        var value: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &value)
+        guard error == .success, let value, let stringValue = value as? String else {
+            return nil
+        }
+        return stringValue
+    }
+
+    private func rewriteTerminalInput(_ text: String, in element: AXUIElement) -> Bool {
+        guard let context = terminalEditContext(from: element) else {
+            return false
+        }
+
+        let normalizedTarget = normalizeTerminalText(text)
+        if normalizeTerminalText(context.inputText) == normalizedTarget {
+            return true
+        }
+
+        guard clearTerminalInput(in: element, initialContext: context) else {
+            return false
+        }
+
+        let maxInsertionAttempts = 3
+        for attempt in 0..<maxInsertionAttempts {
+            Thread.sleep(forTimeInterval: 0.03)
+            if insertTerminalText(text, into: element) {
+                return true
+            }
+
+            guard attempt < maxInsertionAttempts - 1 else {
+                break
+            }
+
+            let currentInput = currentTerminalInputText(in: element)
+            guard !currentInput.isEmpty else {
+                continue
+            }
+
+            guard let refreshedContext = terminalEditContext(from: element) else {
+                return false
+            }
+            guard clearTerminalInput(in: element, initialContext: refreshedContext) else {
+                return false
+            }
+        }
+
+        return false
+    }
+
+    private func waitForTerminalRewrite(_ expectedText: String, in element: AXUIElement) -> Bool {
+        let deadline = Date().addingTimeInterval(Self.terminalRewriteStageOneTimeout)
+        let normalizedExpected = sanitizedTerminalInputText(expectedText)
+
+        repeat {
+            let observation = terminalRewriteObservation(in: element)
+            if observationMatchesTerminalRewrite(observation, normalizedExpected: normalizedExpected) {
+                clearTerminalRewriteFailureSummary()
+                return true
+            }
+            Thread.sleep(forTimeInterval: Self.terminalRewriteStageOnePollInterval)
+        } while Date() < deadline
+
+        let finalStageOneObservation = terminalRewriteObservation(in: element)
+        if observationMatchesTerminalRewrite(finalStageOneObservation, normalizedExpected: normalizedExpected) {
+            clearTerminalRewriteFailureSummary()
+            return true
+        }
+
+        logger?.log("等待：回写校验进入二次确认")
+        Thread.sleep(forTimeInterval: Self.terminalRewriteStageTwoSettle)
+
+        var latestObservation = finalStageOneObservation
+        for attempt in 0..<Self.terminalRewriteStageTwoAttempts {
+            latestObservation = terminalRewriteObservation(in: element)
+            if observationMatchesTerminalRewrite(latestObservation, normalizedExpected: normalizedExpected) {
+                clearTerminalRewriteFailureSummary()
+                return true
+            }
+
+            if attempt < Self.terminalRewriteStageTwoAttempts - 1 {
+                Thread.sleep(forTimeInterval: Self.terminalRewriteStageTwoPollInterval)
+            }
+        }
+
+        cacheTerminalRewriteFailureSummary(
+            expectedText: expectedText,
+            summary: terminalRewriteFailureSummary(expectedText: expectedText, observation: latestObservation)
+        )
+        return false
+    }
+
+    private func clearTerminalInput(
+        in element: AXUIElement,
+        initialContext: TerminalEditContext
+    ) -> Bool {
+        var context = initialContext
+        let maxAttempts = 3
+
+        for attempt in 0..<maxAttempts {
+            let movesToEnd = max(0, context.inputText.count - context.caretOffset)
+            guard pressKeyRepeated(keyCode: 124, count: movesToEnd, interKeyDelay: 0.003) else {
+                return false
+            }
+
+            guard pressKeyRepeated(keyCode: 51, count: context.inputText.count, interKeyDelay: 0.003) else {
+                return false
+            }
+
+            if waitForTerminalInputToClear(in: element) {
+                return true
+            }
+
+            guard attempt < maxAttempts - 1 else {
+                break
+            }
+
+            Thread.sleep(forTimeInterval: 0.03)
+            guard let refreshedContext = terminalEditContext(from: element) else {
+                return false
+            }
+            context = refreshedContext
+        }
+
+        return waitForTerminalInputToClear(in: element)
+    }
+
+    private func waitForTerminalInputToClear(in element: AXUIElement) -> Bool {
+        let timeout: TimeInterval = 0.35
+        let pollInterval: TimeInterval = 0.02
+        let deadline = Date().addingTimeInterval(timeout)
+
+        repeat {
+            if let currentInput = readableCurrentTerminalInputText(in: element),
+               currentInput.isEmpty {
+                return true
+            }
+            Thread.sleep(forTimeInterval: pollInterval)
+        } while Date() < deadline
+
+        return readableCurrentTerminalInputText(in: element)?.isEmpty == true
+    }
+
+    private func waitForTerminalSubmission(in element: AXUIElement, previousInput: String) -> Bool {
+        let deadline = Date().addingTimeInterval(Self.terminalSubmissionTimeout)
+        var consecutiveEmptyReadings = 0
+
+        repeat {
+            if let currentInput = readableCurrentTerminalInputText(in: element),
+               currentInput.isEmpty {
+                consecutiveEmptyReadings += 1
+                if consecutiveEmptyReadings >= Self.terminalSubmissionStableReadings {
+                    return true
+                }
+            } else {
+                consecutiveEmptyReadings = 0
+            }
+            Thread.sleep(forTimeInterval: Self.terminalSubmissionPollInterval)
+        } while Date() < deadline
+
+        return false
+    }
+
+    private func observationMatchesTerminalRewrite(
+        _ observation: TerminalRewriteObservation,
+        normalizedExpected: String
+    ) -> Bool {
+        if let selectedText = observation.selectedText,
+           terminalRewriteTextsEquivalent(
+               sanitizedTerminalInputText(selectedText),
+               normalizedExpected
+           ) {
+            return true
+        }
+
+        if let tailText = observation.tailText,
+           terminalRewriteTextsEquivalent(
+               sanitizedTerminalInputText(tailText),
+               normalizedExpected
+           ) {
+            return true
+        }
+
+        return false
+    }
+
+    private func waitForStableTerminalRewriteBeforeSend(
+        expectedText: String,
+        in element: AXUIElement
+    ) -> Bool {
+        let normalizedExpected = sanitizedTerminalInputText(expectedText)
+        guard !normalizedExpected.isEmpty else {
+            return true
+        }
+
+        let deadline = Date().addingTimeInterval(Self.terminalRewritePreSendStabilityTimeout)
+        var consecutiveMatches = 0
+
+        repeat {
+            let observation = terminalRewriteObservation(in: element)
+            if observationMatchesTerminalRewrite(observation, normalizedExpected: normalizedExpected) {
+                consecutiveMatches += 1
+                if consecutiveMatches >= Self.terminalRewritePreSendStableReadings {
+                    return true
+                }
+            } else {
+                consecutiveMatches = 0
+            }
+            Thread.sleep(forTimeInterval: Self.terminalRewritePreSendStabilityPollInterval)
+        } while Date() < deadline
+
+        return false
+    }
+
+    private func terminalRewriteTextsEquivalent(_ lhs: String, _ rhs: String) -> Bool {
+        if lhs == rhs {
+            return true
+        }
+        return normalizedMixedScriptBoundarySpacing(lhs) == normalizedMixedScriptBoundarySpacing(rhs)
+    }
+
+    // Terminal/TUI occasionally inserts or drops spaces or soft-wrap newlines at
+    // Han <-> ASCII boundaries, and sometimes inside Han text itself. Treat only
+    // those cases as equivalent without relaxing other whitespace differences.
+    private func normalizedMixedScriptBoundarySpacing(_ text: String) -> String {
+        let characters = Array(text)
+        guard !characters.isEmpty else {
+            return text
+        }
+
+        var result = String()
+        var index = 0
+
+        while index < characters.count {
+            if isSoftWrapWhitespace(characters[index]) {
+                let whitespaceStart = index
+                while index < characters.count, isSoftWrapWhitespace(characters[index]) {
+                    index += 1
+                }
+
+                let previous = whitespaceStart > 0 ? characters[whitespaceStart - 1] : nil
+                let next = index < characters.count ? characters[index] : nil
+                if let previous, let next,
+                   isMixedScriptBoundary(previous: previous, next: next) {
+                    continue
+                }
+
+                for whitespaceIndex in whitespaceStart..<index {
+                    result.append(characters[whitespaceIndex])
+                }
+                continue
+            }
+
+            result.append(characters[index])
+            index += 1
+        }
+
+        return result
+    }
+
+    private func isMixedScriptBoundary(previous: Character, next: Character) -> Bool {
+        (isHanCharacter(previous) && isHanCharacter(next))
+            || (isHanCharacter(previous) && isASCIITokenCharacter(next))
+            || (isASCIITokenCharacter(previous) && isHanCharacter(next))
+    }
+
+    private func isSoftWrapWhitespace(_ character: Character) -> Bool {
+        character.unicodeScalars.allSatisfy { CharacterSet.whitespacesAndNewlines.contains($0) }
+    }
+
+    private func isASCIITokenCharacter(_ character: Character) -> Bool {
+        character.unicodeScalars.allSatisfy { scalar in
+            scalar.isASCII && CharacterSet.alphanumerics.contains(scalar)
+        }
+    }
+
+    private func isHanCharacter(_ character: Character) -> Bool {
+        character.unicodeScalars.contains { scalar in
+            switch scalar.value {
+            case 0x3400...0x4DBF,
+                 0x4E00...0x9FFF,
+                 0xF900...0xFAFF,
+                 0x20000...0x2A6DF,
+                 0x2A700...0x2B73F,
+                 0x2B740...0x2B81F,
+                 0x2B820...0x2CEAF,
+                 0x2CEB0...0x2EBEF,
+                 0x30000...0x3134F:
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
+    private func currentTerminalInputText(in element: AXUIElement) -> String {
+        sanitizedTerminalInputText(terminalEditContext(from: element)?.inputText ?? "")
+    }
+
+    private func readableCurrentTerminalInputText(in element: AXUIElement) -> String? {
+        guard let context = terminalEditContext(from: element) else {
+            return nil
+        }
+        return sanitizedTerminalInputText(context.inputText)
+    }
+
+    private func terminalRewriteObservation(in element: AXUIElement) -> TerminalRewriteObservation {
+        guard let fullText = stringAttribute(kAXValueAttribute as String, from: element) else {
+            return TerminalRewriteObservation(selectedText: nil, tailText: nil)
+        }
+
+        let bufferNSString = fullText.replacingOccurrences(of: "\0", with: "") as NSString
+        let selectedText: String?
+        if let selectedRange = rangeAttribute(kAXSelectedTextRangeAttribute as String, from: element),
+           let selectionContext = terminalEditContext(from: bufferNSString, selectedRange: selectedRange) {
+            selectedText = selectionContext.inputText
+        } else {
+            selectedText = nil
+        }
+
+        let tailText = terminalEditContextFromBufferTail(bufferNSString)?.inputText
+        return TerminalRewriteObservation(selectedText: selectedText, tailText: tailText)
+    }
+
+    private func terminalRewriteFailureSummary(
+        expectedText: String,
+        observation: TerminalRewriteObservation
+    ) -> String {
+        let expectedPreview = terminalPreview(normalizeTerminalText(expectedText))
+        let selectedPreview = observation.selectedText.map {
+            terminalPreview(normalizeTerminalText($0))
+        } ?? "<nil>"
+        let tailPreview = observation.tailText.map {
+            terminalPreview(normalizeTerminalText($0))
+        } ?? "<nil>"
+        return "expected=\(expectedPreview), selected=\(selectedPreview), tail=\(tailPreview)"
+    }
+
+    private func cacheTerminalRewriteFailureSummary(expectedText: String, summary: String) {
+        terminalRewriteStateQueue.sync {
+            lastTerminalRewriteFailureSummary = (normalizeTerminalText(expectedText), summary)
+        }
+    }
+
+    private func clearTerminalRewriteFailureSummary() {
+        terminalRewriteStateQueue.sync {
+            lastTerminalRewriteFailureSummary = nil
+        }
+    }
+
+    private func normalizeTerminalText(_ text: String) -> String {
+        trimmingTrailingLineBreaks(
+            from: text
+                .replacingOccurrences(of: "\0", with: "")
+                .replacingOccurrences(of: "\r\n", with: "\n")
+        )
+    }
+
+    private func sanitizedTerminalInputText(_ text: String) -> String {
+        let normalized = normalizeTerminalText(text)
+        guard !normalized.isEmpty else {
+            return ""
+        }
+
+        var keptLines: [String] = []
+        for line in normalized.components(separatedBy: "\n") {
+            if shouldIgnoreTerminalInputLine(line) {
+                continue
+            }
+
+            let candidate = normalizedTerminalUILine(line)
+            if looksLikeUnknownTerminalUICandidate(candidate) {
+                logUnknownTerminalUICandidate(candidate)
+            }
+            keptLines.append(line)
+        }
+
+        while let first = keptLines.first,
+              first.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            keptLines.removeFirst()
+        }
+
+        while let last = keptLines.last,
+              last.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            keptLines.removeLast()
+        }
+
+        return keptLines.joined(separator: "\n")
+    }
+
+    private func terminalPreview(_ text: String, limit: Int = 120) -> String {
+        let normalized = text.replacingOccurrences(of: "\n", with: "\\n")
+        if normalized.count <= limit {
+            return normalized
+        }
+        let endIndex = normalized.index(normalized.startIndex, offsetBy: limit)
+        return "\(normalized[..<endIndex])..."
+    }
+
+    private func terminalEditContext(from element: AXUIElement) -> TerminalEditContext? {
+        guard isTerminalShellElement(element) else {
+            return nil
+        }
+
+        guard let fullText = stringAttribute(kAXValueAttribute as String, from: element) else {
+            return nil
+        }
+
+        let bufferNSString = fullText.replacingOccurrences(of: "\0", with: "") as NSString
+        if let selectedRange = rangeAttribute(kAXSelectedTextRangeAttribute as String, from: element),
+           let selectionContext = terminalEditContext(
+               from: bufferNSString,
+               selectedRange: selectedRange
+           ) {
+            return selectionContext
+        }
+
+        return terminalEditContextFromBufferTail(bufferNSString)
+    }
+
+    private func terminalEditContext(
+        from bufferNSString: NSString,
+        selectedRange: CFRange
+    ) -> TerminalEditContext? {
+        let lineRange = effectiveCurrentLineRange(
+            in: bufferNSString,
+            selectedRange: selectedRange
+        )
+        return terminalEditContext(
+            from: bufferNSString,
+            lineRange: lineRange,
+            selectedRange: selectedRange
+        )
+    }
+
+    private func terminalEditContext(
+        from bufferNSString: NSString,
+        lineRange: NSRange,
+        selectedRange: CFRange?
+    ) -> TerminalEditContext? {
+        let segments = terminalLineSegments(
+            in: bufferNSString,
+            currentLineRange: lineRange,
+            selectedRange: selectedRange
+        )
+        guard !segments.isEmpty else {
+            return nil
+        }
+
+        let inputText = segments.map(\.text).joined()
+        let caretOffset = terminalCaretOffset(
+            selectedRange: selectedRange,
+            inputText: inputText,
+            segments: segments,
+            buffer: bufferNSString
+        )
+        return TerminalEditContext(inputText: inputText, caretOffset: caretOffset)
+    }
+
+    private func terminalEditContextFromBufferTail(_ bufferNSString: NSString) -> TerminalEditContext? {
+        let trailingTrimmed = trimmingTrailingLineBreaks(from: bufferNSString as String)
+        let trimmedNSString = trailingTrimmed as NSString
+        guard trimmedNSString.length > 0 else {
+            return nil
+        }
+
+        let lastLineRange = lastNonAuxiliaryLineRange(in: trimmedNSString)
+            ?? currentLineRange(
+                in: trimmedNSString,
+                selectedRange: CFRange(location: trimmedNSString.length, length: 0)
+            )
+        if let context = terminalEditContext(
+            from: trimmedNSString,
+            lineRange: lastLineRange,
+            selectedRange: nil
+        ) {
+            return context
+        }
+
+        if let promptRange = lastPromptLineRange(in: trimmedNSString),
+           let context = terminalEditContext(
+               from: trimmedNSString,
+               lineRange: promptRange,
+               selectedRange: nil
+           ) {
+            return context
+        }
+
+        let lastLine = trimmedNSString.substring(with: lastLineRange)
+        guard !lastLine.isEmpty else {
+            return nil
+        }
+        return TerminalEditContext(inputText: lastLine, caretOffset: lastLine.count)
+    }
+
+    private func effectiveCurrentLineRange(in buffer: NSString, selectedRange: CFRange) -> NSRange {
+        var lineRange = currentLineRange(in: buffer, selectedRange: selectedRange)
+        while lineRange.length > 0 {
+            let lineText = buffer.substring(with: lineRange)
+            if !isTerminalAuxiliaryLine(lineText) {
+                return lineRange
+            }
+            guard let previousLineRange = previousNonAuxiliaryLineRange(in: buffer, before: lineRange) else {
+                return lineRange
+            }
+            lineRange = previousLineRange
+        }
+        return lineRange
+    }
+
+    private func currentLineRange(in buffer: NSString, selectedRange: CFRange) -> NSRange {
+        let bufferLength = buffer.length
+        let caretLocation = min(max(selectedRange.location, 0), bufferLength)
+
+        let prefixRange = NSRange(location: 0, length: caretLocation)
+        let previousNewlineRange = buffer.range(
+            of: "\n",
+            options: .backwards,
+            range: prefixRange
+        )
+        let lineStart = previousNewlineRange.location == NSNotFound
+            ? 0
+            : previousNewlineRange.location + previousNewlineRange.length
+
+        let suffixRange = NSRange(location: caretLocation, length: bufferLength - caretLocation)
+        let nextNewlineRange = buffer.range(
+            of: "\n",
+            options: [],
+            range: suffixRange
+        )
+        let lineEnd = nextNewlineRange.location == NSNotFound
+            ? bufferLength
+            : nextNewlineRange.location
+
+        return NSRange(location: lineStart, length: max(0, lineEnd - lineStart))
+    }
+
+    private func inputStartOffset(in lineNSString: NSString, lineText: String) -> Int? {
+        let leadingPromptMarkers = ["$ ", "# ", "% ", "> ", "› ", "❯ ", "➜ "]
+        for marker in leadingPromptMarkers where lineText.hasPrefix(marker) {
+            let markerLength = (marker as NSString).length
+            guard markerLength <= lineNSString.length else {
+                return nil
+            }
+            return markerLength
+        }
+
+        let infixPromptMarkers = [" $ ", " # ", " % ", " > ", " › ", " ❯ ", " ➜ "]
+        for marker in infixPromptMarkers {
+            let markerRange = lineNSString.range(of: marker, options: .backwards)
+            guard markerRange.location != NSNotFound else {
+                continue
+            }
+
+            let inputStart = markerRange.location + markerRange.length
+            guard inputStart <= lineNSString.length else {
+                continue
+            }
+            return inputStart
+        }
+
+        return nil
+    }
+
+    private func lastPromptLineRange(in buffer: NSString) -> NSRange? {
+        let leadingPromptMarkers = ["\n$ ", "\n# ", "\n% ", "\n> ", "\n› ", "\n❯ ", "\n➜ "]
+        let fullRange = NSRange(location: 0, length: buffer.length)
+        var bestRange: NSRange?
+
+        for marker in leadingPromptMarkers {
+            let markerRange = buffer.range(of: marker, options: .backwards, range: fullRange)
+            guard markerRange.location != NSNotFound else {
+                continue
+            }
+
+            let lineStart = markerRange.location + 1
+            let lineRange = lineRangeStarting(at: lineStart, in: buffer)
+            if bestRange == nil || lineStart > bestRange!.location {
+                bestRange = lineRange
+            }
+        }
+
+        let startOfBufferPromptMarkers = ["$ ", "# ", "% ", "> ", "› ", "❯ ", "➜ "]
+        for marker in startOfBufferPromptMarkers {
+            if buffer.hasPrefix(marker) {
+                let lineRange = lineRangeStarting(at: 0, in: buffer)
+                if bestRange == nil || 0 > bestRange!.location {
+                    bestRange = lineRange
+                }
+                break
+            }
+        }
+
+        return bestRange
+    }
+
+    private func terminalCaretOffset(
+        selectedRange: CFRange?,
+        inputText: String,
+        segments: [TerminalLineSegment],
+        buffer: NSString
+    ) -> Int {
+        guard let selectedRange, selectedRange.length == 0 else {
+            return inputText.count
+        }
+
+        let caretLocation = selectedRange.location
+        var prefixCount = 0
+
+        for segment in segments {
+            let segmentAbsoluteStart = segment.lineRange.location + segment.segmentStart
+            let segmentAbsoluteEnd = segment.lineRange.location + segment.lineRange.length
+
+            if caretLocation >= segmentAbsoluteEnd {
+                prefixCount += segment.text.count
+                continue
+            }
+
+            if caretLocation <= segmentAbsoluteStart {
+                return prefixCount
+            }
+
+            let caretUTF16Offset = max(0, caretLocation - segmentAbsoluteStart)
+            let lineText = buffer.substring(with: segment.lineRange) as NSString
+            let prefix = lineText.substring(
+                with: NSRange(location: segment.segmentStart, length: caretUTF16Offset)
+            )
+            return prefixCount + prefix.count
+        }
+
+        return inputText.count
+    }
+
+    private func terminalLineSegments(
+        in buffer: NSString,
+        currentLineRange: NSRange,
+        selectedRange: CFRange?
+    ) -> [TerminalLineSegment] {
+        guard currentLineRange.length > 0 else {
+            return []
+        }
+
+        var collectedLines: [(range: NSRange, text: String)] = [
+            (currentLineRange, buffer.substring(with: currentLineRange))
+        ]
+        var searchRange = currentLineRange
+        let maxLookbackLines = 12
+
+        for _ in 0..<maxLookbackLines {
+            let firstLine = collectedLines[0]
+            let lineNSString = firstLine.text as NSString
+            if let inputStart = inputStartOffset(in: lineNSString, lineText: firstLine.text) {
+                return collectedLines.enumerated().compactMap { index, line in
+                    let segmentStart = index == 0 ? inputStart : 0
+                    let segmentEnd = lineSegmentEnd(
+                        for: line.range,
+                        lineText: line.text as NSString,
+                        selectedRange: selectedRange,
+                        isCurrentLine: index == collectedLines.count - 1
+                    )
+                    guard segmentStart <= segmentEnd else {
+                        return TerminalLineSegment(
+                            lineRange: line.range,
+                            segmentStart: segmentStart,
+                            text: ""
+                        )
+                    }
+                    let segmentText = (line.text as NSString).substring(
+                        with: NSRange(location: segmentStart, length: segmentEnd - segmentStart)
+                    )
+                    if shouldIgnoreTerminalInputLine(segmentText) {
+                        return nil
+                    }
+                    return TerminalLineSegment(
+                        lineRange: line.range,
+                        segmentStart: segmentStart,
+                        text: segmentText
+                    )
+                }
+            }
+
+            guard let previousLineRange = previousLineRange(in: buffer, before: searchRange) else {
+                break
+            }
+            collectedLines.insert(
+                (previousLineRange, buffer.substring(with: previousLineRange)),
+                at: 0
+            )
+            searchRange = previousLineRange
+        }
+
+        return []
+    }
+
+    private func lineSegmentEnd(
+        for lineRange: NSRange,
+        lineText: NSString,
+        selectedRange: CFRange?,
+        isCurrentLine: Bool
+    ) -> Int {
+        guard isCurrentLine, let selectedRange, selectedRange.length == 0 else {
+            return lineText.length
+        }
+
+        let relativeCaret = selectedRange.location - lineRange.location
+        return min(max(relativeCaret, 0), lineText.length)
+    }
+
+    private func previousLineRange(in buffer: NSString, before lineRange: NSRange) -> NSRange? {
+        guard lineRange.location > 0 else {
+            return nil
+        }
+
+        let previousLineEnd = lineRange.location - 1
+        let prefixRange = NSRange(location: 0, length: previousLineEnd)
+        let previousNewlineRange = buffer.range(
+            of: "\n",
+            options: .backwards,
+            range: prefixRange
+        )
+        let previousLineStart = previousNewlineRange.location == NSNotFound
+            ? 0
+            : previousNewlineRange.location + previousNewlineRange.length
+        return NSRange(
+            location: previousLineStart,
+            length: max(0, previousLineEnd - previousLineStart)
+        )
+    }
+
+    private func previousNonAuxiliaryLineRange(in buffer: NSString, before lineRange: NSRange) -> NSRange? {
+        var candidate = previousLineRange(in: buffer, before: lineRange)
+        while let current = candidate {
+            let text = buffer.substring(with: current)
+            if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               !isTerminalAuxiliaryLine(text) {
+                return current
+            }
+            candidate = previousLineRange(in: buffer, before: current)
+        }
+        return nil
+    }
+
+    private func lastNonAuxiliaryLineRange(in buffer: NSString) -> NSRange? {
+        var candidate = currentLineRange(
+            in: buffer,
+            selectedRange: CFRange(location: buffer.length, length: 0)
+        )
+        while candidate.length > 0 {
+            let text = buffer.substring(with: candidate)
+            if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               !isTerminalAuxiliaryLine(text) {
+                return candidate
+            }
+            guard let previous = previousLineRange(in: buffer, before: candidate) else {
+                return nil
+            }
+            candidate = previous
+        }
+        return nil
+    }
+
+    private func lineRangeStarting(at lineStart: Int, in buffer: NSString) -> NSRange {
+        let clampedStart = min(max(lineStart, 0), buffer.length)
+        let suffixRange = NSRange(location: clampedStart, length: buffer.length - clampedStart)
+        let nextNewlineRange = buffer.range(
+            of: "\n",
+            options: [],
+            range: suffixRange
+        )
+        let lineEnd = nextNewlineRange.location == NSNotFound
+            ? buffer.length
+            : nextNewlineRange.location
+        return NSRange(location: clampedStart, length: max(0, lineEnd - clampedStart))
+    }
+
+    private func isTerminalAuxiliaryLine(_ line: String) -> Bool {
+        let trimmed = normalizedTerminalUILine(line)
+        guard !trimmed.isEmpty else {
+            return false
+        }
+
+        if looksLikeRuntimeLogLine(trimmed) {
+            return true
+        }
+
+        let lowercase = trimmed.lowercased()
+        let codexHintTokens = [
+            "? for shortcuts",
+            "tab to queue message",
+            "queue message",
+            "shift+tab",
+            "enter to send",
+            "esc to edit",
+            "⏎ send",
+            "shift+⏎ newline",
+            "ctrl+j newline",
+            "ctrl+t transcript",
+            "ctrl+c quit"
+        ]
+        if codexHintTokens.contains(where: { lowercase.contains($0) }) {
+            return true
+        }
+
+        if lowercase.contains("to get started, describe a task") {
+            return true
+        }
+
+        if lowercase.contains("use /skills to list available skills")
+            || lowercase.contains("try the codex app")
+            || lowercase.contains("openai codex v") {
+            return true
+        }
+
+        let codexStartupCommandHints = [
+            "/init - create an agents.md",
+            "/status - show current session",
+            "/permissions - choose what codex",
+            "/approvals - choose what codex",
+            "/model - choose what model",
+            "/review - review any changes",
+            "/diff - show git diff",
+            "/prompts - show example prompts"
+        ]
+        if codexStartupCommandHints.contains(where: { lowercase.contains($0) }) {
+            return true
+        }
+
+        let separatorCount = trimmed.components(separatedBy: " · ").count - 1
+        let codexStatusTokens = [
+            "gpt-",
+            "% left",
+            "% used",
+            "weekly ",
+            "window",
+            "xhigh",
+            "fast",
+            "~/",
+            "feat/",
+            "main ·"
+        ]
+
+        if separatorCount >= 3,
+           codexStatusTokens.contains(where: { trimmed.localizedCaseInsensitiveContains($0) }) {
+            return true
+        }
+
+        return false
+    }
+
+    private func shouldIgnoreTerminalInputLine(_ line: String) -> Bool {
+        let trimmed = normalizedTerminalUILine(line)
+        guard !trimmed.isEmpty else {
+            return false
+        }
+
+        return isTerminalAuxiliaryLine(trimmed) || isTerminalPlaceholderOnlyLine(trimmed)
+    }
+
+    private func isTerminalPlaceholderOnlyLine(_ line: String) -> Bool {
+        let trimmed = normalizedTerminalUILine(line)
+        guard !trimmed.isEmpty else {
+            return false
+        }
+
+        let knownPlaceholderLines = [
+            "Explain this codebase",
+            "Summarize recent commits",
+            "Implement {feature}",
+            "Find and fix a bug in @filename",
+            "Write tests for @filename",
+            "Improve documentation in @filename",
+            "Run /review on my current changes",
+            "Ask Codex to do anything",
+            "Ask Codex to do virtually anything"
+        ]
+        if knownPlaceholderLines.contains(where: { trimmed.caseInsensitiveCompare($0) == .orderedSame }) {
+            return true
+        }
+
+        if trimmed.range(
+            of: #"^Ask Codex to do (?:virtually )?anything[.!]?$"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil {
+            return true
+        }
+
+        if trimmed.range(
+            of: #"^[A-Z][A-Za-z0-9'\/+-]*(?: [A-Za-z0-9'\/+.-]+){0,8} \{[a-z0-9_-]+\}[.!]?$"#,
+            options: .regularExpression
+        ) != nil {
+            return true
+        }
+
+        if trimmed.range(
+            of: #"^[A-Z][A-Za-z0-9'\/+-]*(?: [A-Za-z0-9'\/+.-]+){0,8} (?:for|in|with|from|using|on|at|to) @[A-Za-z0-9_.-]+[.!]?$"#,
+            options: .regularExpression
+        ) != nil {
+            return true
+        }
+
+        return false
+    }
+
+    private func looksLikeUnknownTerminalUICandidate(_ line: String) -> Bool {
+        let trimmed = normalizedTerminalUILine(line)
+        guard !trimmed.isEmpty else {
+            return false
+        }
+        guard !isTerminalAuxiliaryLine(trimmed), !isTerminalPlaceholderOnlyLine(trimmed) else {
+            return false
+        }
+
+        if trimmed.range(of: #"/[A-Za-z0-9_-]+"#, options: .regularExpression) != nil {
+            return true
+        }
+
+        if trimmed.contains("@") || trimmed.contains("{") || trimmed.contains("}") {
+            return true
+        }
+
+        return false
+    }
+
+    private func logUnknownTerminalUICandidate(_ line: String) {
+        guard let logger else { return }
+        let inserted = terminalUICandidateQueue.sync {
+            observedTerminalUICandidates.insert(line).inserted
+        }
+        guard inserted else { return }
+        logger.log("观测到未收录的 Codex 建议文案：\(line)")
+    }
+
+    private func normalizedTerminalUILine(_ line: String) -> String {
+        var trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        let promptMarkers = ["$ ", "# ", "% ", "> ", "› ", "❯ ", "➜ "]
+        for marker in promptMarkers where trimmed.hasPrefix(marker) {
+            trimmed.removeFirst(marker.count)
+            break
+        }
+        return trimmed.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func looksLikeRuntimeLogLine(_ line: String) -> Bool {
+        guard line.hasPrefix("[20"),
+              let closingBracketIndex = line.firstIndex(of: "]") else {
+            return false
+        }
+
+        let timestampPortion = line[line.index(after: line.startIndex)..<closingBracketIndex]
+        return timestampPortion.contains("T")
+    }
+
+    private func isTerminalShellElement(_ element: AXUIElement) -> Bool {
+        guard stringAttribute(kAXRoleAttribute as String, from: element) == (kAXTextAreaRole as String) else {
+            return false
+        }
+        return stringAttribute(kAXDescriptionAttribute as String, from: element) == "shell"
+    }
+
+    private func stringAttribute(_ attribute: String, from element: AXUIElement) -> String? {
+        var value: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
+        guard error == .success, let value, let stringValue = extractString(from: value) else {
+            return nil
+        }
+        return stringValue
+    }
+
+    private func extractString(from value: CFTypeRef) -> String? {
+        if let stringValue = value as? String {
+            return stringValue
+        }
+        if let attributedString = value as? NSAttributedString {
+            return attributedString.string
+        }
+        return nil
+    }
+
+    private func rangeAttribute(_ attribute: String, from element: AXUIElement) -> CFRange? {
+        var value: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
+        guard error == .success else {
+            return nil
+        }
+        return decodeAXRangeValue(value)
+    }
+
+    private func decodeAXRangeValue(_ value: CFTypeRef?) -> CFRange? {
+        guard let value, CFGetTypeID(value) == AXValueGetTypeID() else {
+            return nil
+        }
+        let axValue = value as! AXValue
+        guard AXValueGetType(axValue) == .cfRange else {
+            return nil
+        }
+        var range = CFRange()
+        AXValueGetValue(axValue, .cfRange, &range)
+        return range
+    }
+
+    private func trimmingTrailingLineBreaks(from text: String) -> String {
+        var trimmed = text
+        while let last = trimmed.last, last.isNewline {
+            trimmed.removeLast()
+        }
+        return trimmed
+    }
+
+    private func pressKeyRepeated(
+        keyCode: CGKeyCode,
+        count: Int,
+        interKeyDelay: TimeInterval = 0
+    ) -> Bool {
+        guard count >= 0 else {
+            return false
+        }
+
+        if count == 0 {
+            return true
+        }
+
+        guard let source = CGEventSource(stateID: .combinedSessionState) else {
+            return false
+        }
+
+        for _ in 0..<count {
+            guard let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
+                  let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) else {
+                return false
+            }
+            down.post(tap: .cghidEventTap)
+            up.post(tap: .cghidEventTap)
+            if interKeyDelay > 0 {
+                Thread.sleep(forTimeInterval: interKeyDelay)
+            }
+        }
+        return true
+    }
+
+    private func postKeyPress(keyCode: CGKeyCode, source: CGEventSource) -> Bool {
+        guard let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) else {
+            return false
+        }
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
+        return true
+    }
+
+    private func pasteTerminalText(_ text: String, into element: AXUIElement) -> Bool {
+        let pasteboard = NSPasteboard.general
+        let snapshot = snapshotPasteboardItems(from: pasteboard)
+        pasteboard.clearContents()
+        guard pasteboard.setString(text, forType: .string) else {
+            restorePasteboardItems(snapshot, to: pasteboard)
+            return false
+        }
+        guard pressModifiedKey(keyCode: 9, flags: .maskCommand) else {
+            restorePasteboardItems(snapshot, to: pasteboard)
+            return false
+        }
+
+        let matched = waitForTerminalRewrite(text, in: element)
+        restorePasteboardItems(snapshot, to: pasteboard)
+        return matched
+    }
+
+    private func insertTerminalText(_ text: String, into element: AXUIElement) -> Bool {
+        if pasteTerminalText(text, into: element) {
+            return true
+        }
+
+        guard postUnicodeText(text) else {
+            return false
+        }
+
+        return waitForTerminalRewrite(text, in: element)
+    }
+
+    private func pressModifiedKey(keyCode: CGKeyCode, flags: CGEventFlags) -> Bool {
+        guard let source = CGEventSource(stateID: .combinedSessionState),
+              let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) else {
+            return false
+        }
+
+        down.flags = flags
+        up.flags = flags
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
+        return true
+    }
+
+    private func snapshotPasteboardItems(from pasteboard: NSPasteboard) -> [[NSPasteboard.PasteboardType: Data]] {
+        guard let items = pasteboard.pasteboardItems else {
+            return []
+        }
+        return items.map { item in
+            var snapshot: [NSPasteboard.PasteboardType: Data] = [:]
+            for type in item.types {
+                if let data = item.data(forType: type) {
+                    snapshot[type] = data
+                }
+            }
+            return snapshot
+        }
+    }
+
+    private func restorePasteboardItems(_ items: [[NSPasteboard.PasteboardType: Data]], to pasteboard: NSPasteboard) {
+        pasteboard.clearContents()
+        guard !items.isEmpty else {
+            return
+        }
+
+        let restoredItems = items.map { snapshot -> NSPasteboardItem in
+            let item = NSPasteboardItem()
+            for (type, data) in snapshot {
+                item.setData(data, forType: type)
+            }
+            return item
+        }
+        pasteboard.writeObjects(restoredItems)
+    }
+
+    private func postUnicodeText(_ text: String) -> Bool {
+        guard let source = CGEventSource(stateID: .combinedSessionState),
+              let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else {
+            return false
+        }
+
+        let unicodeScalars = Array(text.utf16)
+        keyDown.keyboardSetUnicodeString(
+            stringLength: unicodeScalars.count,
+            unicodeString: unicodeScalars
+        )
+        keyUp.keyboardSetUnicodeString(
+            stringLength: unicodeScalars.count,
+            unicodeString: unicodeScalars
+        )
+        keyDown.post(tap: .cghidEventTap)
+        keyUp.post(tap: .cghidEventTap)
+        return true
+    }
+}
